@@ -1,0 +1,4 @@
+Condition,RMSE,KS,Sim. truncated at day,Sim. S(t) at truncation
+DMSO day 10,0.1158,0.165,41.4691,0.0099
+Auxin day 10,0.0806,0.1817,59.0985,0.0098
+Auxin day 21,0.045,0.1271,47.5793,0.0099
