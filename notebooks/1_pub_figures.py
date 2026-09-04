@@ -504,7 +504,7 @@ legend_handles = [
     Line2D([0], [0], color=C_D1, lw=1.4, label=rf'Died stage 1  ($t \leq {tI_21:.0f}$)'),
     Line2D([0], [0], color=C_D2, lw=1.4, label=rf'Died stage 2  ($t > {tI_21:.0f}$)'),
     Line2D([0], [0], color='darkred', lw=1.4, ls='--',
-           label=rf'$z_h$: ${z_h0:.0f} \to {z_h1:.0f}$'),
+           label=rf'$Z$: ${z_h0:.0f} \to {z_h1:.0f}$'),
     Line2D([0], [0], color='royalblue', lw=1.2, ls=':',
            label=rf'$z_m$: ${z_m0:.1f} \to {z_m1:.1f}$'),
 ]
@@ -519,7 +519,7 @@ ax2.set_xlim(0, T_MAX)
 ax2.set_ylim(0, Z_TOP)
 
 fig2.tight_layout(pad=0.55)
-# fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories.png', bbox_inches='tight', dpi=600)
+fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories.png', bbox_inches='tight', dpi=600)
 plt.show()
 
 # %% [markdown]
