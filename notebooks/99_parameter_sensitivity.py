@@ -8,9 +8,9 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: Python (dynamics)
+#     display_name: dynamics
 #     language: python
-#     name: dynamics
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -156,7 +156,7 @@ for factor, color in zip(FACTORS, colors):
     med_t = median_survival_time(alpha, Z, SIGMA_SQ)
     rows_a.append({"factor": factor, "alpha": alpha, "Z": Z, "gamma": gamma, "mrdt": mrdt, "median_lifespan": med_t})
     ax.plot(t_plot, survival_analytic(t_plot, alpha, Z, SIGMA_SQ), color=color,
-            label=f"alpha x{factor:.2g} (alpha={alpha:.3g}, Z={Z:.3g})")
+            label=f"alpha x{factor:.3g} (alpha={alpha:.3g}, Z={Z:.3g})")
 ax.set_xlabel("Time (days)")
 ax.set_ylabel("S(t)")
 ax.set_title("Sweep A: vary alpha, g fixed at DMSO baseline")
@@ -181,7 +181,7 @@ for factor, color in zip(FACTORS, colors):
     med_t = median_survival_time(alpha_base, Z, SIGMA_SQ)
     rows_b.append({"factor": factor, "alpha": alpha_base, "Z": Z, "g": g, "gamma": gamma, "mrdt": mrdt, "median_lifespan": med_t})
     ax.plot(t_plot, survival_analytic(t_plot, alpha_base, Z, SIGMA_SQ), color=color,
-            label=f"g x{factor:.2g} (g={g:.3g}, Z={Z:.3g})")
+            label=f"g x{factor:.3g} (g={g:.3g}, Z={Z:.3g})")
 ax.set_xlabel("Time (days)")
 ax.set_ylabel("S(t)")
 ax.set_title("Sweep B: vary g, alpha fixed at DMSO baseline")
@@ -254,7 +254,7 @@ for ax, (sweep_name, param_name) in zip(axes, [("alpha", "alpha (g fixed)"), ("g
         )
         for i in range(8):
             ax.plot(t_grid, z_paths[:, i], color=color, lw=1.0, alpha=0.7,
-                    label=f"x{factor:.2g}" if i == 0 else None)
+                    label=f"x{factor:.3g}" if i == 0 else None)
     ax.set_xlabel("Time (days)")
     ax.set_title(f"Vary {param_name}")
     ax.legend(fontsize=8, title="factor")
@@ -351,7 +351,7 @@ for factor, color in zip(FACTORS, sweep_colors):
     Z = alpha / g_base
     S = simulated_survival_curve(alpha, Z, SIGMA_SQ, seed=10)
     t50 = median_survival_time(alpha, Z, SIGMA_SQ, n_paths=N_SIM, dt=DT_SIM, t_max=300.0, rng=np.random.default_rng(10))
-    axes_s1[0].plot(t_eval, S, color=color, label=rf"$\alpha$ x{factor:.2g}")
+    axes_s1[0].plot(t_eval, S, color=color, label=rf"$\alpha$ x{factor:.3g}")
     if np.isfinite(t50):
         axes_s1[0].plot(t50, 0.5, "o", color=color, ms=3, mec="black", mew=0.3, zorder=5)
 
@@ -360,7 +360,7 @@ for factor, color in zip(FACTORS, sweep_colors):
     Z = alpha_base / g
     S = simulated_survival_curve(alpha_base, Z, SIGMA_SQ, seed=11)
     t50 = median_survival_time(alpha_base, Z, SIGMA_SQ, n_paths=N_SIM, dt=DT_SIM, t_max=300.0, rng=np.random.default_rng(11))
-    axes_s1[1].plot(t_eval, S, color=color, label=rf"$g$ x{factor:.2g}")
+    axes_s1[1].plot(t_eval, S, color=color, label=rf"$g$ x{factor:.3g}")
     if np.isfinite(t50):
         axes_s1[1].plot(t50, 0.5, "o", color=color, ms=3, mec="black", mew=0.3, zorder=5)
 
