@@ -8,9 +8,9 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: Python (dynamics)
+#     display_name: dynamics
 #     language: python
-#     name: dynamics
+#     name: python3
 # ---
 
 # %% [markdown]
@@ -184,7 +184,7 @@ import matplotlib.patches as mpatches
 # barrier to cross -- any positive fluctuation falls directly under the
 # g*z^2 nonlinearity alone, straight into the exponential/hyperbolic
 # regimes to its right.
-a_schem = 0
+a_schem = 0.001
 g_schem = 0.2
 z_unstable = -a_schem / g_schem  # = 0 here: no separate fixed point to the
                                   # right of z=0 when alpha=0
@@ -289,6 +289,8 @@ for i, (col, eq, name) in enumerate(regimes):
 fig1.tight_layout()
 fig1.savefig(FIGURES_DIR / 'pub_fig1_potential_unstable.png', bbox_inches='tight', dpi=600)
 plt.show()
+
+# %%
 
 # %% [markdown]
 # **Figure 1 legend (draft).** **Instability dynamics of *C.~elegans*.**
@@ -517,7 +519,7 @@ ax2.set_xlim(0, T_MAX)
 ax2.set_ylim(0, Z_TOP)
 
 fig2.tight_layout(pad=0.55)
-fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories.png', bbox_inches='tight', dpi=600)
+# fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories.png', bbox_inches='tight', dpi=600)
 plt.show()
 
 # %% [markdown]
