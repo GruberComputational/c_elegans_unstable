@@ -14,97 +14,94 @@
 # ---
 
 # %% [markdown]
-# # Is the Markovian (state-only) model actually needed, or would an explicit
-# # age-dependent hazard fit just as well?
+# # Markov (state-only) vs. age-dependent hazard: a quantitative comparison
 #
-# ## Context
-#
+# This is an exploratory supplementary analysis: it checks a claim from
 # `pdf/manuscript_perspective.pdf` ("Old worms, new tricks: dynamical
-# instability explains late-life rejuvenation in C. elegans") argues that
-# late-life DAF-2 depletion still extends lifespan because the underlying
-# Langevin dynamics are **Markovian**: the rate of change of the collective
-# state `z` depends only on `z`'s current value, not on elapsed calendar
-# time (Fig. 2 there shows simulated DMSO/Auxin_day_21 trajectories with
-# boxed insets arguing day-10 vs. day-21 dynamics "look indistinguishable").
+# instability explains late-life rejuvenation in C. elegans") against real
+# data, quantitatively rather than by eye.
 #
-# A reviewer raised the following comment:
+# ## Background
 #
-# > "The manuscript argues that the Markov property of the Langevin
-# > trajectory ... explains why late-life DAF-2 degradation remains
-# > effective. This is the paper's most important claim, and it is currently
-# > supported only by visual inspection of trajectory insets in Figure 2 ...
-# > Visual similarity is insufficient. The authors should provide a
-# > quantitative comparison: at minimum, a statistical test asking whether
-# > an age-dependent model describes the empirical survival data
-# > significantly better than a Markovian one. If such a test cannot be
-# > performed with currently available data, that limitation should be
-# > stated explicitly and the claim should be moderated accordingly."
+# The manuscript's Langevin model is **Markovian**: the rate of change of
+# the collective state `z` depends only on `z`'s current value, not on how
+# much calendar time has passed. The manuscript argues this is *why*
+# late-life DAF-2 depletion (the day-21 intervention) still extends
+# lifespan -- worms switched at day 21 behave like day-10-switched worms
+# once they reach the same state, regardless of the 11-day age gap. Its
+# Figure 2 supports this visually, with simulated trajectory insets showing
+# day-10 and day-21 dynamics that look indistinguishable.
+#
+# "Look indistinguishable" is a visual read, not a quantitative one. This
+# notebook asks a more concrete, checkable question instead: does an
+# explicit age-dependent hazard (the classical Gompertz model) describe
+# the real survival data any better than our state-dependent Langevin
+# model does?
 #
 # ## What this notebook actually tests
 #
-# **The Markov property itself is not testable by simulating the model --
-# it's a mathematical consequence of writing the drift/diffusion as
-# functions of `z` alone (no explicit `t`), true by construction for any
-# parameter values.** What *is* testable against real data is a narrower,
-# empirical question: does our state-dependent parametric family describe
-# the observed survival data at least as well as a comparably-simple,
-# purely age-dependent alternative (the classical Gompertz hazard)? That is
-# the comparison built below, in two parts:
+# The Markov property itself isn't something a simulation can test -- it's
+# a mathematical consequence of writing the drift/diffusion as functions of
+# `z` alone (no explicit `t`), true by construction for any parameter
+# values. What real data *can* test is a narrower, empirical question: does
+# our state-dependent model describe the observed survival curves at least
+# as well as a comparably-simple, purely age-dependent alternative? That
+# comparison is built below, in two parts:
 #
 # 1. **DMSO_day_10 (baseline, single phase).** Take our model's own fitted
 #    `(alpha, g, sigma)` for DMSO_day_10 directly from
 #    `0_auto_fit_parameters_mle.py` (not refit here). Fit a Gompertz hazard
 #    to the same data by maximum likelihood. Compare via AIC.
-# 2. **DMSO_day_10 -> Auxin_day_21 (two phase, at the intervention).** Take
-#    our model's own fitted two-phase parameters (phase 1 = DMSO, phase 2 =
-#    Auxin_day_21's post-switch fit, both from `0_auto_fit_parameters_mle.py`).
-#    Build a matching two-piece Gompertz model: phase 1 fixed at Part 1's
-#    own DMSO Gompertz fit, phase 2 fit fresh to Auxin_day_21 -- mirroring
-#    exactly how our own two-phase model only re-fits phase 2 at the
-#    intervention. Compare via AIC.
+# 2. **DMSO_day_10 -> Auxin_day_21 (two phase, at the intervention).**
+#    `0_auto_fit_parameters_mle.py` does not fit Auxin_day_21 at all: our
+#    model's phase-2 dynamics there are exactly Auxin_day_10's own
+#    independently-fitted parameters, reused on the reasoning that worms
+#    switched onto auxin at day 21 settle into the same post-auxin dynamics
+#    as worms given auxin at day 10. The Gompertz counterpart mirrors this
+#    exactly: phase 1 fixed at Part 1's own DMSO Gompertz fit, phase 2
+#    fixed at a Gompertz model fit to Auxin_day_10's own data (fit fresh
+#    here). Neither model touches Auxin_day_21's data at all -- both make a
+#    genuine out-of-sample prediction for that condition, so `k=0` for both
+#    and the comparison reduces to a direct log-likelihood comparison.
 #
-# Both comparisons use the *same* discrete-time, grouped-data likelihood
+# Both parts use the *same* discrete-time, grouped-data likelihood
 # construction for both model families (interval probability mass for
 # deaths, survival probability for censoring -- see `_neg_log_lik_from_S`
 # below), so the two hazard shapes are judged on equal footing.
 #
-# ## Why the model is Markovian -- a provable consequence, not an assumption
+# ## Why the Langevin model is Markovian
 #
 # A stochastic process is Markovian if the distribution of its *next* step
 # depends only on its *current* state, not on how it got there or how much
 # calendar time has elapsed. Our model is `dz/dt = alpha*z + g*z^2 +
 # noise`, with `alpha`, `g` (`=alpha/Z`), and `sigma_sq` all *constants*
 # within a given phase -- the right-hand side is a function of `z` alone,
-# with no explicit `t` anywhere in it. **Any Ito SDE `dz = b(z)dt +
+# with no explicit `t` anywhere in it. Any Ito SDE `dz = b(z)dt +
 # sigma(z)dW` whose drift and diffusion depend only on the state defines a
-# time-homogeneous Markov process, by construction.** This is why the
-# Markov property cannot be independently "tested" by simulating the
-# model -- a time-homogeneous SDE cannot fail to generate Markovian
-# trajectories. What data *can* test is whether this particular equation
-# (rather than some richer, `t`-dependent alternative) is an adequate
-# description of the real biology -- exactly the hazard-shape comparison
-# run below.
+# time-homogeneous Markov process, by construction, so this property holds
+# for any parameter values -- it can't be falsified by simulation. What
+# data *can* speak to is whether this particular equation (rather than some
+# richer, `t`-dependent alternative) is an adequate description of the real
+# biology -- exactly the hazard-shape comparison run below.
 #
-# **One precise caveat about the switch.** The two-phase model changes
-# `(alpha, Z)` at a fixed calendar day `t_switch`, an exogenous,
-# deterministic event (the actual day the intervention was applied) -- not
-# a hidden dependence of `z`'s own evolution on its history. *Within* each
-# phase, conditional on which side of `t_switch` a worm is on, the
-# dynamics remain exactly Markovian in the sense above.
+# One precise caveat about the switch: the two-phase model changes
+# `(alpha, g)` -- the two coefficients that actually define the drift
+# `dz/dt = alpha*z + g*z^2 + noise` -- at a fixed calendar day `t_switch`,
+# an exogenous, deterministic event (the actual day the intervention was
+# applied), not a hidden dependence of `z`'s own evolution on its history.
+# (`Z = alpha/g` and `z_m = sigma/sqrt(alpha)` are just derived quantities
+# of `(alpha, g, sigma)`, not independent parameters of the dynamics.)
+# Within each phase, conditional on which side of `t_switch` a worm is on,
+# the dynamics remain exactly Markovian in the sense above.
 #
-# ## What this comparison can and cannot establish
+# ## Limitations
 #
-# 1. **A saturated (fully free) hazard model would not be a fair
-#    alternative** -- one free parameter per observed death age always
-#    wins against any constrained model. We do not use it here; the fair
-#    test is against a comparably-simple alternative with a matched
-#    parameter count.
-# 2. **Neither test directly validates the trajectory-level Markov claim.**
+# 1. **Neither test directly validates the trajectory-level Markov claim.**
 #    `z` is never directly measured -- we only ever observe population
 #    death/censoring times. Any test built from survival data is a test of
 #    the *population-level hazard shape*, not of whether an individual
 #    worm's future genuinely depends only on its own current state.
-# 3. **DMSO's mortality is only observed at 8 check-day ages**, with deaths
+# 2. **DMSO's mortality is only observed at 8 check-day ages**, with deaths
 #    compressed into the last four -- coarse enough that a hazard which
 #    plateaus *within* one of those gaps looks identical, in this data, to
 #    one that never plateaus. This limits how much either test's outcome
@@ -144,6 +141,11 @@ for name, d in raw_data.items():
 # simulated for our Langevin model -- everything else about how a
 # log-likelihood is built from `S` is identical, so neither model gets an
 # easier scoring rule than the other.
+#
+# `aic`, `report_fit`, and `report_delta_aic` below are the only functions
+# that print/format results -- Part 1 and Part 2 both call them instead of
+# each formatting its own `logL`/`k`/`AIC` output, so the two parts report
+# identically and can't drift apart.
 
 # %%
 def _grouped_death_censor_weights(d):
@@ -171,17 +173,47 @@ def aic(logL, k):
     return 2 * k - 2 * logL
 
 
+def report_fit(label, logL, k, note=""):
+    """Print `label`'s logL/k/AIC in one consistent format and return its
+    AIC -- used for every model/condition combination below so Part 1 and
+    Part 2 report identically instead of each hand-rolling its own print."""
+    suffix = f", {note}" if note else ""
+    aic_val = aic(logL, k)
+    print(f"{label}:  logL={logL:.4g}  (k={k}{suffix})  AIC={aic_val:.4g}")
+    return aic_val
+
+
+def report_delta_aic(condition, aic_gomp, aic_langevin):
+    """Print + return AIC_Gompertz - AIC_Langevin for one condition, with
+    the same 'favors X, |delta|>10 is decisive' framing used for every
+    condition below."""
+    delta = aic_gomp - aic_langevin
+    print(f"\ndelta_AIC (Gompertz - Langevin), {condition} = {delta:+.4g}  "
+          f"({'favors Langevin' if delta > 0 else 'favors Gompertz'}; "
+          f"|delta_AIC| > 10 is conventionally read as decisive)")
+    return delta
+
+
 # %% [markdown]
 # ### Gompertz hazard model
 #
 # Classical Gompertz hazard `M(t) = M0*exp(alpha_g*t)`, with closed-form
 # survival `S(t) = exp(-(M0/alpha_g)*(exp(alpha_g*t) - 1))` -- an explicit
-# function of calendar age, no state variable or mechanism at all. The
-# two-piece version restarts the Gompertz clock at `t_switch` (mirroring
-# how our own two-phase model keeps `z` continuous but restarts its
-# *parameters* at the intervention): phase 2's hazard is a fresh Gompertz
-# curve in time-since-switch, scaled to start from phase 1's own survival
-# probability at `t_switch`.
+# function of calendar age, no state variable or mechanism at all.
+#
+# The two-piece version does **not** restart the Gompertz clock at
+# `t_switch`: both `(M0_1, alpha_g1)` and `(M0_2, alpha_g2)` are always
+# evaluated at the worm's actual calendar age `t`, exactly as each was
+# fit (phase 1 against DMSO_day_10's own ages, phase 2 against
+# Auxin_day_10's own ages). For `t > t_switch`, phase 2's *own* survival
+# curve `S2(t)` is rescaled by `S1(t_switch) / S2(t_switch)` so `S` stays
+# continuous at the switch -- age is the shared "state" both phases refer
+# to, so switching hazard functions at a fixed age is the direct Gompertz
+# analogue of switching `(alpha, g)` at `t_switch` for a continuously
+# evolving `z` in the Langevin model. Resetting the clock to `t -
+# t_switch` instead would evaluate phase 2's curve over the wrong age
+# range entirely -- the near-flat, low-hazard *early* part of a curve fit
+# to ages 10-42, rather than the ages 21-39 actually being predicted.
 
 # %%
 def gompertz_survival(t, M0, alpha_g):
@@ -191,13 +223,25 @@ def gompertz_survival(t, M0, alpha_g):
 
 def gompertz_survival_two_phase(t, M0_1, alpha_g1, M0_2, alpha_g2, t_switch):
     t = np.asarray(t, dtype=float)
+    S1_at_switch = gompertz_survival(t_switch, M0_1, alpha_g1)
+    S2_at_switch = gompertz_survival(t_switch, M0_2, alpha_g2)
     S = np.where(
         t <= t_switch,
         gompertz_survival(t, M0_1, alpha_g1),
-        gompertz_survival(t_switch, M0_1, alpha_g1)
-        * gompertz_survival(np.clip(t - t_switch, 0.0, None), M0_2, alpha_g2),
+        S1_at_switch * gompertz_survival(t, M0_2, alpha_g2) / S2_at_switch,
     )
     return S
+
+
+def gompertz_neg_log_lik_two_phase(M0_1, alpha_g1, M0_2, alpha_g2, t_switch, d):
+    """Negative log-likelihood of a *fixed* (not fit) two-phase Gompertz
+    model against `d` -- the Gompertz counterpart of
+    `langevin_neg_log_lik_two_phase` below, same signature shape, so Part 2
+    can evaluate both model families identically."""
+    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    floor = 1.0 / (d.n_total + 1)
+    S = gompertz_survival_two_phase(np.concatenate(([0.0], t_unique)), M0_1, alpha_g1, M0_2, alpha_g2, t_switch)
+    return _neg_log_lik_from_S(S, death_weight, censor_weight, floor)
 
 
 def _fit_two_stage(objective, bounds, seed):
@@ -224,24 +268,6 @@ def fit_gompertz_single(d, bounds, seed=0):
     return _fit_two_stage(objective, bounds, seed)
 
 
-def fit_gompertz_two_phase(d, fixed_phase1, t_switch, bounds, seed=0):
-    """MLE fit of (M0_2, alpha_g2) only; phase 1 is fixed (not fit to this
-    condition's data), exactly mirroring the Langevin model's own
-    phase-1-fixed-from-DMSO construction below."""
-    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
-    floor = 1.0 / (d.n_total + 1)
-    M0_1, alpha_g1 = fixed_phase1
-
-    def objective(params2):
-        M0_2, alpha_g2 = params2
-        S = gompertz_survival_two_phase(
-            np.concatenate(([0.0], t_unique)), M0_1, alpha_g1, M0_2, alpha_g2, t_switch,
-        )
-        return _neg_log_lik_from_S(S, death_weight, censor_weight, floor)
-
-    return _fit_two_stage(objective, bounds, seed)
-
-
 # %% [markdown]
 # ### Our Langevin model's own likelihood
 #
@@ -251,17 +277,9 @@ def fit_gompertz_two_phase(d, fixed_phase1, t_switch, bounds, seed=0):
 # its own Kaplan-Meier curve off those simulated paths -- no closed-form
 # approximation, so this is correct regardless of `gamma`.
 #
-# The clipping `floor` passed to `_neg_log_lik_from_S` is deliberately
-# `1/(d.n_total + 1)` -- the real cohort size -- **not** `1/(n_paths + 1)`.
-# The floor exists to reflect the real data's own statistical resolution
-# (you cannot distinguish an event probability finer than roughly
-# `1/n_total` given only `n_total` worms), which has nothing to do with
-# `n_paths`, an internal Monte-Carlo fidelity knob. Using `n_paths` here
-# would let this model's likelihood get credit/blame for tail behavior at
-# a resolution the real data can't actually support, and -- more
-# importantly -- would score it against a *different* floor than the
-# Gompertz functions below, silently breaking the "identical scoring rule
-# for both models" claim this comparison depends on.
+# The clipping `floor` passed to `_neg_log_lik_from_S` is `1/(d.n_total +
+# 1)` -- the real cohort size, reflecting the real data's own statistical
+# resolution -- so both model families are scored against the same floor.
 
 # %%
 def langevin_neg_log_lik_single(alpha, Z, sigma_sq, d, n_paths=20_000, dt=0.1, seed=0):
@@ -289,6 +307,30 @@ def langevin_neg_log_lik_two_phase(alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, d
 
 
 # %% [markdown]
+# ### Shared comparison plot
+#
+# Part 1 and Part 2 each overlay the same three things on one axis -- the
+# real KM curve, the Langevin model's simulated curve, and the Gompertz
+# model's closed-form curve -- differing only in which condition, color,
+# and (for Part 2) an intervention-day marker. `plot_survival_comparison`
+# below draws that once, so the two parts can't silently drift out of sync
+# with each other.
+
+# %%
+def plot_survival_comparison(ax, kmf, t_plot, S_langevin, S_gompertz,
+                              logL_langevin, logL_gompertz, color, title, t_switch=None):
+    kmf.plot_survival_function(ax=ax, color=color, ci_show=False, label="real KM curve")
+    ax.plot(t_plot, S_langevin, ls="--", color="black", label=f"Langevin model (logL={logL_langevin:.1f})")
+    ax.plot(t_plot, S_gompertz, ls="-.", color="tab:red", label=f"Gompertz model (logL={logL_gompertz:.1f})")
+    if t_switch is not None:
+        ax.axvline(t_switch, color="gray", lw=1, ls=":", label=f"intervention start (day {t_switch:.0f})")
+    ax.set_xlabel("Time (days)")
+    ax.set_ylabel("S(t)")
+    ax.set_title(title)
+    ax.legend(fontsize=8)
+
+
+# %% [markdown]
 # ## Part 1: DMSO_day_10 baseline (single phase)
 #
 # Our model's `(alpha, g, sigma)` are `0_auto_fit_parameters_mle.py`'s own
@@ -310,20 +352,17 @@ d_dmso = raw_data["DMSO_day_10"]
 nll_langevin1 = langevin_neg_log_lik_single(a0, Z0, sigma_sq0, d_dmso, seed=0)
 logL_langevin1 = -nll_langevin1
 k_langevin1 = 3
-print(f"Langevin model:  logL={logL_langevin1:.4g}  (k={k_langevin1})  AIC={aic(logL_langevin1, k_langevin1):.4g}")
+aic_langevin1 = report_fit("Langevin model", logL_langevin1, k_langevin1)
 
 bounds_gompertz1 = [(1e-4, 2.0), (1e-3, 2.0)]
 popt_gomp1, nll_gomp1 = fit_gompertz_single(d_dmso, bounds_gompertz1, seed=0)
 M0_dmso, alpha_g_dmso = popt_gomp1
 logL_gomp1 = -nll_gomp1
 k_gomp1 = 2
-print(f"Gompertz model:  M0={M0_dmso:.4g}, alpha_g={alpha_g_dmso:.4g}   "
-      f"logL={logL_gomp1:.4g}  (k={k_gomp1})  AIC={aic(logL_gomp1, k_gomp1):.4g}")
+print(f"Gompertz fit: M0={M0_dmso:.4g}, alpha_g={alpha_g_dmso:.4g}")
+aic_gomp1 = report_fit("Gompertz model", logL_gomp1, k_gomp1)
 
-delta_aic1 = aic(logL_gomp1, k_gomp1) - aic(logL_langevin1, k_langevin1)
-print(f"\ndelta_AIC (Gompertz - Langevin) = {delta_aic1:+.4g}  "
-      f"({'favors Langevin' if delta_aic1 > 0 else 'favors Gompertz'}; "
-      f"|delta_AIC| > 10 is conventionally read as decisive)")
+delta_aic1 = report_delta_aic("DMSO_day_10", aic_gomp1, aic_langevin1)
 
 # %%
 kmf_dmso = kaplan_meier_curve(d_dmso)
@@ -332,61 +371,63 @@ T_plot_sim1, _, _ = simulate_fpt_and_state(
     20_000, a0, g0, sigma_sq0, Z0, z0=0.0, dt=0.1, t_max=d_dmso.t.max(), rng=np.random.default_rng(1),
 )
 S_langevin1_plot = km_from_fpt(T_plot_sim1, t_plot, t_max=d_dmso.t.max())
+S_gomp1_plot = gompertz_survival(t_plot, M0_dmso, alpha_g_dmso)
 
 fig, ax = plt.subplots(figsize=(8, 6))
-kmf_dmso.plot_survival_function(ax=ax, color="#0072B2", label="real KM curve", ci_show=False)
-ax.plot(t_plot, S_langevin1_plot, ls="--", color="black", label=f"Langevin model (logL={logL_langevin1:.1f})")
-ax.plot(t_plot, gompertz_survival(t_plot, M0_dmso, alpha_g_dmso), ls="-.", color="tab:red",
-        label=f"Gompertz model (logL={logL_gomp1:.1f})")
-ax.set_xlabel("Time (days)")
-ax.set_ylabel("S(t)")
-ax.set_title("DMSO_day_10: Langevin vs. Gompertz model")
-ax.legend()
+plot_survival_comparison(ax, kmf_dmso, t_plot, S_langevin1_plot, S_gomp1_plot,
+                          logL_langevin1, logL_gomp1, color="#0072B2",
+                          title="DMSO_day_10: Langevin vs. Gompertz model")
 plt.tight_layout()
 plt.show()
 
 # %% [markdown]
 # ## Part 2: DMSO_day_10 -> Auxin_day_21 (two phase, at the intervention)
 #
-# Phase 1 is fixed at Part 1's own fits in *both* models (DMSO's own
-# `(alpha0, Z0)` for Langevin, `(M0_dmso, alpha_g_dmso)` for Gompertz) --
-# neither model gets to see Auxin_day_21's data through phase 1. Only
-# phase 2 is estimated from Auxin_day_21 itself: `(alpha1, Z1)` for our
-# model (`0_auto_fit_parameters_mle.py`'s Step 2 fit, `k=2`), `(M0_2,
-# alpha_g2)` for Gompertz (fit fresh here, `k=2`) -- a genuine, matched-`k`
-# comparison of which phase-2 hazard shape better explains what happened
-# after the intervention.
+# `0_auto_fit_parameters_mle.py` does not fit Auxin_day_21 at all: our
+# model's phase-2 dynamics there are exactly Auxin_day_10's own
+# independently-fitted `(a0_auxin10, log_g0_auxin10)` (Step 1b), reused on
+# the reasoning that worms switched onto auxin at day 21 settle into the
+# same post-auxin dynamics as worms given auxin at day 10.
+#
+# To keep this comparison matched, the Gompertz counterpart mirrors that
+# construction exactly: phase 1 fixed at Part 1's own DMSO Gompertz fit,
+# phase 2 fixed at a Gompertz model fit to Auxin_day_10's own data (fit
+# fresh here, since `0_auto_fit_parameters_mle.py` only fits our Langevin
+# model). **Neither model touches Auxin_day_21's data at all** -- both
+# make a genuine out-of-sample prediction for that condition, so `k=0` for
+# both and the comparison reduces to a direct log-likelihood comparison.
 
 # %%
-g1_scale, a1_scale = 1.0510, 0.8017  # 0_auto_fit_parameters_mle.py, Step 2
-alpha1 = a0 * a1_scale
-Z1 = alpha1 / (g0 ** g1_scale)
+a0_auxin10, log_g0_auxin10 = 0.1035, -2.7358  # 0_auto_fit_parameters_mle.py, Step 1b
+g0_auxin10 = 10.0 ** log_g0_auxin10
+alpha1, Z1 = a0_auxin10, a0_auxin10 / g0_auxin10
 t_switch = 21.0
-print(f"Langevin phase 2 (Auxin_day_21, from 0_auto_fit_parameters_mle.py): alpha={alpha1:.4g}, Z={Z1:.4g}")
+print(f"Langevin phase 2 (= Auxin_day_10's own fit, from 0_auto_fit_parameters_mle.py): "
+      f"alpha={alpha1:.4g}, Z={Z1:.4g}")
 
+d_auxin10 = raw_data["Auxin_day_10"]
 d_auxin21 = raw_data["Auxin_day_21"]
 
 nll_langevin2 = langevin_neg_log_lik_two_phase(a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21, seed=0)
 logL_langevin2 = -nll_langevin2
-k_langevin2 = 2
-print(f"Langevin model:  logL={logL_langevin2:.4g}  (k={k_langevin2}, phase 1 fixed)  "
-      f"AIC={aic(logL_langevin2, k_langevin2):.4g}")
+k_langevin2 = 0
+aic_langevin2 = report_fit("Langevin model", logL_langevin2, k_langevin2,
+                            note="both phases fixed -- neither fit to Auxin_day_21")
 
-bounds_gompertz2 = [(1e-6, 2.0), (1e-3, 2.0)]
-popt_gomp2, nll_gomp2 = fit_gompertz_two_phase(
-    d_auxin21, fixed_phase1=(M0_dmso, alpha_g_dmso), t_switch=t_switch, bounds=bounds_gompertz2, seed=0,
-)
-M0_2, alpha_g2 = popt_gomp2
+# Gompertz counterpart: phase 2 fixed at a fresh Gompertz fit to
+# Auxin_day_10's own data, mirroring Step 1b -- never touching Auxin_day_21.
+bounds_gompertz_a10 = [(1e-4, 2.0), (1e-3, 2.0)]
+popt_gomp_a10, nll_gomp_a10 = fit_gompertz_single(d_auxin10, bounds_gompertz_a10, seed=1)
+M0_2, alpha_g2 = popt_gomp_a10
+print(f"Gompertz phase 2 (Auxin_day_10, fit fresh here): M0={M0_2:.4g}, alpha_g={alpha_g2:.4g}")
+
+nll_gomp2 = gompertz_neg_log_lik_two_phase(M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch, d_auxin21)
 logL_gomp2 = -nll_gomp2
-k_gomp2 = 2
-print(f"Gompertz model:  M0_2={M0_2:.4g}, alpha_g2={alpha_g2:.4g}   "
-      f"logL={logL_gomp2:.4g}  (k={k_gomp2}, phase 1 fixed at DMSO fit)  "
-      f"AIC={aic(logL_gomp2, k_gomp2):.4g}")
+k_gomp2 = 0
+aic_gomp2 = report_fit("Gompertz model", logL_gomp2, k_gomp2,
+                        note="both phases fixed -- neither fit to Auxin_day_21")
 
-delta_aic2 = aic(logL_gomp2, k_gomp2) - aic(logL_langevin2, k_langevin2)
-print(f"\ndelta_AIC (Gompertz - Langevin) = {delta_aic2:+.4g}  "
-      f"({'favors Langevin' if delta_aic2 > 0 else 'favors Gompertz'}; "
-      f"|delta_AIC| > 10 is conventionally read as decisive)")
+delta_aic2 = report_delta_aic("Auxin_day_21", aic_gomp2, aic_langevin2)
 
 # %%
 kmf_auxin21 = kaplan_meier_curve(d_auxin21)
@@ -395,17 +436,12 @@ T_plot_sim2 = simulate_two_phase(
     20_000, a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21.t.max(), dt=0.1,
 )
 S_langevin2_plot = km_from_fpt(T_plot_sim2, t_plot21, t_max=d_auxin21.t.max())
+S_gomp2_plot = gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch)
 
 fig, ax = plt.subplots(figsize=(8, 6))
-kmf_auxin21.plot_survival_function(ax=ax, color="#D55E00", label="real KM curve", ci_show=False)
-ax.plot(t_plot21, S_langevin2_plot, ls="--", color="black", label=f"two-phase Langevin model (logL={logL_langevin2:.1f})")
-ax.plot(t_plot21, gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch),
-        ls="-.", color="tab:red", label=f"two-piece Gompertz model (logL={logL_gomp2:.1f})")
-ax.axvline(t_switch, color="gray", lw=1, ls=":", label="intervention start (day 21)")
-ax.set_xlabel("Time (days)")
-ax.set_ylabel("S(t)")
-ax.set_title("Auxin_day_21: Langevin vs. Gompertz model")
-ax.legend(fontsize=8)
+plot_survival_comparison(ax, kmf_auxin21, t_plot21, S_langevin2_plot, S_gomp2_plot,
+                          logL_langevin2, logL_gomp2, color="#D55E00",
+                          title="Auxin_day_21: Langevin vs. Gompertz model", t_switch=t_switch)
 plt.tight_layout()
 plt.show()
 
@@ -413,23 +449,26 @@ plt.show()
 # ## Summary
 #
 # Report both `delta_AIC` values above plainly, whichever way they land:
-# a per-condition result, not a single verdict on the model. Whichever
-# model wins for DMSO_day_10 alone need not also win for Auxin_day_21 --
-# they are testing the phase-2 hazard shape given an *identical*,
-# data-fixed phase-1 inheritance in both models, which is a different
-# question from Part 1's single-phase comparison. Either way, per the
-# limitations noted at the top: this only ever tests the *population-level
-# hazard shape* against calendar age, not the trajectory-level Markov
-# claim itself (`z` is never directly measured), and DMSO's coarse 8
-# check-day resolution limits how confidently either outcome can be read
-# as evidence for or against a real late-life mortality plateau.
+# a per-condition result, not a single verdict on the model. Part 1 is a
+# direct fit-quality comparison on DMSO_day_10's own data; Part 2 is a
+# genuine out-of-sample prediction test for Auxin_day_21, with both models'
+# phase 1 and phase 2 parameters fixed from other conditions' own fits
+# (DMSO_day_10, Auxin_day_10) rather than fit to Auxin_day_21 itself --
+# a different, arguably stronger question than Part 1's single-phase
+# comparison. Either way, per the limitations noted at the top: this only
+# ever tests the *population-level hazard shape* against calendar age, not
+# the trajectory-level Markov claim itself (`z` is never directly
+# measured), and DMSO's coarse 8 check-day resolution limits how
+# confidently either outcome can be read as evidence for or against a real
+# late-life mortality plateau.
 
 # %% [markdown]
 # ## Manuscript-ready outputs (Supplementary Note 2)
 #
 # Renders the figure and table referenced by
 # `notebooks/notes/supplementary_note2_model_comparison.tex`, using the
-# manuscript's own plotting style (`1_pub_figures.py`'s rcParams).
+# manuscript's own plotting style (`2_pub_figures_auxin10_switch.py`'s
+# rcParams).
 
 # %%
 NOTES_DIR = NOTEBOOK_DIR / "notes"
@@ -461,7 +500,7 @@ axes_s2[0].step(kmf_dmso.survival_function_.index, kmf_dmso.survival_function_.i
                 where="post", color="#0072B2", lw=1.2, label="real KM curve")
 axes_s2[0].plot(t_plot, S_langevin1_plot, ls="--", color="black", lw=1.3,
                  label=rf"Langevin ($\log L={logL_langevin1:.1f}$)")
-axes_s2[0].plot(t_plot, gompertz_survival(t_plot, M0_dmso, alpha_g_dmso), ls="-.", color="tab:red", lw=1.3,
+axes_s2[0].plot(t_plot, S_gomp1_plot, ls="-.", color="tab:red", lw=1.3,
                  label=rf"Gompertz ($\log L={logL_gomp1:.1f}$)")
 axes_s2[0].set_title("DMSO$\\_$day$\\_$10")
 
@@ -469,8 +508,8 @@ axes_s2[1].step(kmf_auxin21.survival_function_.index, kmf_auxin21.survival_funct
                 where="post", color="#D55E00", lw=1.2, label="real KM curve")
 axes_s2[1].plot(t_plot21, S_langevin2_plot, ls="--", color="black", lw=1.3,
                  label=rf"Langevin ($\log L={logL_langevin2:.1f}$)")
-axes_s2[1].plot(t_plot21, gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch),
-                 ls="-.", color="tab:red", lw=1.3, label=rf"Gompertz ($\log L={logL_gomp2:.1f}$)")
+axes_s2[1].plot(t_plot21, S_gomp2_plot, ls="-.", color="tab:red", lw=1.3,
+                 label=rf"Gompertz ($\log L={logL_gomp2:.1f}$)")
 axes_s2[1].axvline(t_switch, color="gray", lw=0.8, ls=":")
 axes_s2[1].set_title("Auxin$\\_$day$\\_$21")
 
@@ -507,9 +546,11 @@ latex_table2 = (
     + "\\caption{Grouped-data maximum-likelihood fit of our Langevin model "
       "(parameters from \\texttt{0\\_auto\\_fit\\_parameters\\_mle.py}, not "
       "refit here) versus a matched-complexity Gompertz hazard, per "
-      "condition. Phase 1 is fixed at the DMSO\\_day\\_10 fit in both "
-      "Auxin\\_day\\_21 models, so only phase-2 parameters "
-      "($k=2$ each) are estimated from that condition's own data. "
+      "condition. For Auxin\\_day\\_21, both models' phase 1 and phase 2 "
+      "parameters are fixed from other conditions' own fits "
+      "(DMSO\\_day\\_10 for phase 1, Auxin\\_day\\_10 for phase 2), so "
+      "$k=0$ parameters are estimated from Auxin\\_day\\_21's own data in "
+      "either model -- a genuine out-of-sample prediction, not a fit. "
       r"$\Delta\mathrm{AIC} = \mathrm{AIC}_\mathrm{Gompertz} - "
       r"\mathrm{AIC}_\mathrm{Langevin} = " + f"{delta_aic1:+.1f}"
       r"$ (DMSO\_day\_10), $" + f"{delta_aic2:+.1f}"
