@@ -16,20 +16,13 @@
 # %% [markdown]
 # # Parameter sensitivity: what happens when only `alpha` or only `g` changes?
 #
-# ## The comment
-#
-# > "Related to the point above [how the transition values in Figure 2 were
-# > chosen], a parameter sensitivity analysis would be useful. For example,
-# > what happens if only one parameter (`alpha` or `g`) is changed at a
-# > time?"
-#
-# ## Plan
-#
-# The Langevin drift is `v(z) = alpha*z + g*z^2`, so `alpha` and `g` are
-# the two literal coefficients in the equation as written. We vary each one
-# individually, holding the *other coefficient* (not `Z`) fixed, since `Z =
-# alpha/g` is itself derived from whichever of `alpha`/`g` is held fixed --
-# so:
+# This is an exploratory supplementary analysis: the Langevin drift is
+# `v(z) = alpha*z + g*z^2`, so `alpha` and `g` are the two literal
+# coefficients in the equation as written. This notebook checks how
+# sensitive the model's predicted survival curve is to each one
+# individually, holding the *other coefficient* (not `Z`) fixed, since
+# `Z = alpha/g` is itself derived from whichever of `alpha`/`g` is held
+# fixed:
 #
 # - **Sweep A**: vary `alpha`, hold `g` fixed at its DMSO-fitted value.
 #   `Z = alpha/g` then moves *with* `alpha`.
@@ -37,23 +30,13 @@
 #   `Z = alpha/g` then moves *inversely* with `g`.
 #
 # **Baseline**: `(alpha, g, sigma)` are taken directly from
-# `notebooks/0_auto_fit_parameters_mle.py`'s Step 1 fit (as pushed into
-# `notebooks/1_pub_figures.py`'s "Fixed parameters" cell) -- the same
-# numbers that generated the actual published Figure 1/2/3, not a separate,
-# independently-fit baseline. Two earlier versions of this notebook used
-# different baselines, both since superseded: first an independent
-# closed-form MLE fit (`sigma_sq` fixed at an assumed 1.0, giving
-# `alpha=0.179, Z=47.2`), then a least-squares fit actually used in the
-# figures at the time (`alpha=0.195, Z=59.65, sigma=1.784`). Since the
-# manuscript's leading fit is now `0_auto_fit_parameters_mle.py`'s Monte
-# Carlo maximum-likelihood fit (`alpha=0.155, Z=54.33, sigma=1.594`), this
-# notebook is re-anchored here again so the sensitivity analysis keeps
-# answering "what happens around the model as actually published," not
-# around a since-superseded fit.
+# `notebooks/0_auto_fit_parameters_mle.py`'s Step 1 fit -- the same numbers
+# used in `2_pub_figures_auxin10_switch.py`'s published figures, not a
+# separate, independently-fit baseline.
 #
-# `sigma_sq` is held fixed throughout **this sweep** because the reviewer's
-# question is specifically about `alpha` and `g` -- not because `sigma_sq`
-# is assumed constant in general (it is itself a fitted quantity in
+# `sigma_sq` is held fixed throughout this sweep, since the question here is
+# specifically about `alpha` and `g` -- not because `sigma_sq` is assumed
+# constant in general (it is itself a fitted quantity in
 # `0_auto_fit_parameters_mle.py`, estimated jointly with `alpha`/`g` from
 # the DMSO data by maximum likelihood, then held fixed across conditions
 # there).
@@ -82,9 +65,9 @@ FACTORS = [0.5, 0.75, 1.0, 1.25, 1.5]  # +/-50%, +/-25%, baseline
 # %% [markdown]
 # ## Baseline: the DMSO operating point actually used in Figures 1-3
 #
-# Hardcoded from `1_pub_figures.py`'s "Fixed parameters" cell rather than
-# refit here, so this analysis can never silently drift from what the
-# published figures actually show.
+# Hardcoded from `2_pub_figures_auxin10_switch.py`'s "Fixed parameters"
+# cell rather than refit here, so this analysis can never silently drift
+# from what the published figures actually show.
 
 # %%
 alpha_base, log_g_base, sigma_base = 0.1553, -2.5439, 1.5941
@@ -92,7 +75,7 @@ g_base = 10.0 ** log_g_base
 Z_base = alpha_base / g_base
 SIGMA_SQ = sigma_base ** 2
 gamma_base = alpha_base * Z_base**2 / SIGMA_SQ
-print(f"Baseline (DMSO, from 1_pub_figures.py): alpha={alpha_base:.5g}, Z={Z_base:.5g}, "
+print(f"Baseline (DMSO, from 2_pub_figures_auxin10_switch.py): alpha={alpha_base:.5g}, Z={Z_base:.5g}, "
       f"g={g_base:.5g}, sigma_sq={SIGMA_SQ:.5g}, gamma={gamma_base:.5g}")
 
 t_plot = np.linspace(0, 30, 300)
@@ -100,8 +83,7 @@ t_plot = np.linspace(0, 30, 300)
 # %% [markdown]
 # ## Why the two sweeps aren't symmetric: `gamma`'s scaling
 #
-# `gamma = alpha*Z^2/sigma_sq` sets the model's dynamical regime (Eq. B12;
-# also the quantity behind the `z_m`/`Z` gap in the previous response).
+# `gamma = alpha*Z^2/sigma_sq` sets the model's dynamical regime (Eq. B12).
 # Substituting `Z = alpha/g`:
 #
 # ```
@@ -264,7 +246,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Summary for the reviewer response
+# ## Summary
 #
 # 1. Both `alpha` and `g` were swept individually (+/-25%, +/-50%) around
 #    DMSO's actual fitted baseline, holding the other coefficient fixed --
@@ -294,7 +276,7 @@ plt.show()
 # by `notebooks/supplementary_note1_sensitivity.tex` -- one figure and one
 # LaTeX table -- using the manuscript's own notation (`alpha`, `g`,
 # `Z = alpha/g`, `D` with `sigma_sq = 2*D`) and its plotting style
-# (`1_pub_figures.py`'s rcParams).
+# (`2_pub_figures_auxin10_switch.py`'s rcParams).
 #
 # The curves plotted here are **simulated directly**
 # (`model.simulate_fpt_and_state` + `model.km_from_fpt`, the same beta=1
