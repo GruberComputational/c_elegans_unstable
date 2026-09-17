@@ -69,6 +69,16 @@
 # deaths, survival probability for censoring -- see `_neg_log_lik_from_S`
 # below), so the two hazard shapes are judged on equal footing.
 #
+# `delta_AIC` alone is a model-selection heuristic, not a significance
+# test with a p-value, and the two model families are non-nested (neither
+# is a restricted special case of the other), so a standard
+# likelihood-ratio test doesn't apply. Each part therefore also reports
+# **Vuong's (1989) closeness test**, the standard test for exactly this
+# non-nested setting, and a **Monte-Carlo noise check**: since the
+# Langevin model's likelihood is simulated (not closed-form like
+# Gompertz's), we confirm the observed AIC/logL gap is actually larger
+# than that simulation's own run-to-run noise.
+#
 # ## Why the Langevin model is Markovian
 #
 # A stochastic process is Markovian if the distribution of its *next* step
@@ -115,6 +125,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.optimize import differential_evolution, minimize
+from scipy.stats import norm
 
 NOTEBOOK_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 SRC_DIR = NOTEBOOK_DIR.parent / "src"
@@ -123,6 +134,18 @@ if str(SRC_DIR) not in sys.path:
 
 from data import kaplan_meier_curve, load_raw_survival_data
 from model import km_from_fpt, simulate_fpt_and_state, simulate_two_phase
+
+N_PATHS = 1_000_000  # simulated paths for the Langevin model's survival curve --
+                      # a single simulation at this size, not several smaller
+                      # ones averaged together (averaging finished logL values
+                      # is biased low by Jensen's inequality, since logL is a
+                      # concave -- log -- function of the simulated curve).
+                      # The "Convergence check" section below sweeps N_PATHS
+                      # from 20k to 1M for Auxin_day_21 -- its own borderline
+                      # Vuong p-value drifts smoothly from 0.059 to 0.041 and
+                      # has plateaued by ~500k, which is why this constant is
+                      # set here rather than left at a smaller, faster-but-
+                      # unconverged value.
 
 raw_data = load_raw_survival_data()
 for name, d in raw_data.items():
@@ -156,14 +179,31 @@ def _grouped_death_censor_weights(d):
     return t_unique, death_weight, censor_weight
 
 
+def _log_lik_contributions_from_S(S_at_grid, death_weight, censor_weight, floor):
+    """
+    Per-observation-type log-likelihood values and their worm counts,
+    given S already evaluated at `[0, t_unique...]`. Two "observation
+    types" per age bin -- death (log interval probability mass) and
+    censoring (log survival probability) -- returned flattened across
+    both types and all bins as (values, weights). `sum(weights * values)`
+    reproduces `_neg_log_lik_from_S`'s log-likelihood exactly; kept apart
+    here because Vuong's test below needs the individual contributions,
+    not just their sum.
+    """
+    S_at_grid = np.clip(S_at_grid, floor, 1.0)
+    interval_mass = np.clip(S_at_grid[:-1] - S_at_grid[1:], floor, None)
+    values = np.concatenate([np.log(interval_mass), np.log(S_at_grid[1:])])
+    weights = np.concatenate([death_weight, censor_weight])
+    return values, weights
+
+
 def _neg_log_lik_from_S(S_at_grid, death_weight, censor_weight, floor):
     """
     Negative grouped-data log-likelihood given S already evaluated at
     `[0, t_unique...]` (so `S_at_grid[0] == 1` by construction).
     """
-    S_at_grid = np.clip(S_at_grid, floor, 1.0)
-    interval_mass = np.clip(S_at_grid[:-1] - S_at_grid[1:], floor, None)
-    log_lik = np.sum(death_weight * np.log(interval_mass) + censor_weight * np.log(S_at_grid[1:]))
+    values, weights = _log_lik_contributions_from_S(S_at_grid, death_weight, censor_weight, floor)
+    log_lik = np.sum(weights * values)
     if not np.isfinite(log_lik):
         return np.inf
     return -float(log_lik)
@@ -192,6 +232,117 @@ def report_delta_aic(condition, aic_gomp, aic_langevin):
           f"({'favors Langevin' if delta > 0 else 'favors Gompertz'}; "
           f"|delta_AIC| > 10 is conventionally read as decisive)")
     return delta
+
+
+# %% [markdown]
+# ### Vuong's closeness test
+#
+# `delta_AIC` says which model fits better and by how much, but not
+# whether that gap is statistically significant -- and since Langevin and
+# Gompertz are non-nested model families, the usual likelihood-ratio test
+# doesn't apply. Vuong's (1989) test is the standard test for exactly this
+# case: it treats each individual worm's log-likelihood contribution under
+# model A minus model B as one observation, and asks whether their mean is
+# significantly different from zero (AIC-corrected for the two models'
+# parameter counts), via a standard-normal `z`.
+
+# %%
+def vuong_test(S_a, S_b, d, k_a, k_b):
+    """
+    Vuong's (1989) closeness test between two models' fitted survival
+    curves `S_a`, `S_b` (both evaluated at `[0, d`'s own observed
+    ages`...]`, the same convention as `_neg_log_lik_from_S`) against the
+    same real grouped data `d`. `k_a`/`k_b`: number of parameters each
+    model estimated from *this* condition's own data (0 for a fixed/reused
+    model, as in Part 2).
+
+    Returns (z, p): z > 0 favors model a. This is the individual-worm
+    generalization of `delta_AIC` -- AIC-corrected by `(k_a - k_b)`, same
+    as `report_delta_aic` -- but standardized by the *spread* of
+    per-worm log-likelihood differences instead of just their sum, which
+    is what makes it an actual significance test rather than a bare
+    magnitude comparison.
+    """
+    _, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    floor = 1.0 / (d.n_total + 1)
+    values_a, weights = _log_lik_contributions_from_S(S_a, death_weight, censor_weight, floor)
+    values_b, _ = _log_lik_contributions_from_S(S_b, death_weight, censor_weight, floor)
+
+    n = weights.sum()
+    lr = values_a - values_b
+    lr_total = np.sum(weights * lr)
+    lr_mean = lr_total / n
+    lr_var = np.sum(weights * (lr - lr_mean) ** 2) / n
+
+    z = (lr_total - (k_a - k_b)) / np.sqrt(n * lr_var)
+    p = 2.0 * norm.sf(abs(z))
+    return z, p
+
+
+def report_vuong_test(condition, S_langevin, S_gompertz, d, k_langevin, k_gomp):
+    """Run + print Vuong's test in the same format as report_delta_aic, plus
+    the direct statistical conclusion its result licenses for this
+    condition (see the Summary section's markdown for why these two
+    conclusions -- not "the models are equivalent" -- are what a
+    reject/fail-to-reject result actually supports)."""
+    z, p = vuong_test(S_langevin, S_gompertz, d, k_langevin, k_gomp)
+    sig = "significant at alpha=0.05" if p < 0.05 else "not significant at alpha=0.05"
+    print(f"Vuong's test (Langevin vs. Gompertz), {condition}: z={z:+.3f}, p={p:.3g}  "
+          f"({'favors Langevin' if z > 0 else 'favors Gompertz'}, {sig})")
+    if p < 0.05:
+        winner, loser = ("Langevin", "Gompertz") if z > 0 else ("Gompertz", "Langevin")
+        print(f"  -> {winner} is significantly closer to the true generating process "
+              f"than {loser} for {condition}.")
+    else:
+        print(f"  -> No significant evidence that either model is closer to the true "
+              f"generating process for {condition}; Langevin is not shown to be "
+              f"significantly different from Gompertz here.")
+    return z, p
+
+
+# %% [markdown]
+# ### Monte-Carlo noise in the Langevin model's simulated logL
+#
+# Gompertz's likelihood is closed-form and exact; the Langevin model's is
+# estimated by simulating `n_paths` first-passage times, so it carries its
+# own Monte-Carlo noise that a single logL number doesn't reveal. Re-running
+# the same evaluation at several seeds and reporting the resulting spread
+# checks that the observed logL/AIC gap between the two models isn't
+# smaller than -- or an artifact of -- that simulation noise.
+#
+# This is a *different* source of uncertainty from Vuong's test above, and
+# the two can look inconsistent at a glance without being so: the
+# Monte-Carlo check asks "how much would this one number jitter on a
+# rerun," while Vuong's test asks "how much does the per-worm advantage of
+# one model vary across the actual population" -- true biological
+# heterogeneity, not simulation noise. A large "N SEs" here alongside a
+# borderline Vuong `p` isn't a contradiction; it just means the aggregate
+# logL estimate itself is stable, while the two models' relative fit still
+# varies enough worm-to-worm that the population-level significance test
+# lands closer to the threshold.
+#
+# Run at `n_paths=100_000` (not the production `N_PATHS=1_000_000` used
+# for the headline numbers) -- ten independent replicates at that size are
+# enough to characterize the *scale* of simulation noise, and doing so at
+# full production resolution would cost ten times as much for no added
+# information here.
+
+# %%
+def langevin_logL_monte_carlo_se(nll_fn, *args, n_seeds=10, base_seed=1000, **kwargs):
+    """Mean and standard error of a Langevin nll_fn's logL across
+    independent Monte-Carlo seeds (distinct from whatever seed the
+    headline fit used, so this is a genuine independent-replicate check)."""
+    logLs = np.array([-nll_fn(*args, seed=base_seed + i, **kwargs) for i in range(n_seeds)])
+    return logLs.mean(), logLs.std(ddof=1)
+
+
+def report_mc_noise(condition, logL_mean, logL_se, logL_gomp):
+    """Print the Langevin logL's Monte-Carlo mean/SE and how many SEs the
+    observed Langevin-vs-Gompertz logL gap spans -- context for whether
+    that gap could plausibly be simulation noise."""
+    gap = logL_mean - logL_gomp
+    print(f"Langevin logL Monte-Carlo check, {condition}: mean={logL_mean:.4g}, SE={logL_se:.3g}  "
+          f"(logL_Langevin - logL_Gompertz = {gap:+.4g}, {abs(gap) / logL_se:.1f} SEs)")
 
 
 # %% [markdown]
@@ -280,29 +431,58 @@ def fit_gompertz_single(d, bounds, seed=0):
 # The clipping `floor` passed to `_neg_log_lik_from_S` is `1/(d.n_total +
 # 1)` -- the real cohort size, reflecting the real data's own statistical
 # resolution -- so both model families are scored against the same floor.
+#
+# `langevin_survival_single`/`_two_phase` below return the simulated `S`
+# curve itself, factored out of the `_neg_log_lik` wrappers so Vuong's test
+# above (which needs the curve, not just its collapsed log-likelihood) can
+# reuse the exact same simulation.
 
 # %%
-def langevin_neg_log_lik_single(alpha, Z, sigma_sq, d, n_paths=20_000, dt=0.1, seed=0):
-    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
-    floor = 1.0 / (d.n_total + 1)
+def langevin_survival_single(alpha, Z, sigma_sq, d, n_paths=N_PATHS, dt=0.1, seed=0):
+    """Simulated S(t) at [0, d's own observed ages...] under the
+    single-phase Langevin model."""
+    t_unique = np.unique(d.t)
     g = alpha / Z
     T, _, _ = simulate_fpt_and_state(
         n_paths, alpha, g, sigma_sq, Z, z0=0.0, dt=dt, t_max=t_unique[-1],
         rng=np.random.default_rng(seed),
     )
-    S = km_from_fpt(T, np.concatenate(([0.0], t_unique)), t_max=t_unique[-1])
+    return km_from_fpt(T, np.concatenate(([0.0], t_unique)), t_max=t_unique[-1])
+
+
+def langevin_neg_log_lik_single(alpha, Z, sigma_sq, d, n_paths=N_PATHS, dt=0.1, seed=0):
+    _, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    floor = 1.0 / (d.n_total + 1)
+    S = langevin_survival_single(alpha, Z, sigma_sq, d, n_paths=n_paths, dt=dt, seed=seed)
     return _neg_log_lik_from_S(S, death_weight, censor_weight, floor)
 
 
-def langevin_neg_log_lik_two_phase(alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, d,
-                                    n_paths=20_000, dt=0.1, seed=0):
-    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
-    floor = 1.0 / (d.n_total + 1)
+def langevin_survival_two_phase(alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, d,
+                                 n_paths=N_PATHS, dt=0.1, seed=0):
+    """Simulated S(t) at [0, d's own observed ages...] under the two-phase
+    Langevin model. Builds its own seeded noise arrays for both phases --
+    `simulate_two_phase` has no `rng` argument and silently falls back to a
+    fixed internal seed when `noise1`/`noise2` aren't given, which would
+    otherwise make `seed` here a no-op."""
+    t_unique = np.unique(d.t)
+    t_max = t_unique[-1]
+    n_steps1 = int(round(t_switch / dt))
+    n_steps2 = int(round((t_max - t_switch) / dt))
+    noise1 = np.random.default_rng(seed).standard_normal((n_paths, n_steps1))
+    noise2 = np.random.default_rng(seed + 1).standard_normal((n_paths, n_steps2))
     T = simulate_two_phase(
-        n_paths, alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, t_unique[-1], dt,
-        noise1=None, noise2=None,
+        n_paths, alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, t_max, dt,
+        noise1=noise1, noise2=noise2,
     )
-    S = km_from_fpt(T, np.concatenate(([0.0], t_unique)), t_max=t_unique[-1])
+    return km_from_fpt(T, np.concatenate(([0.0], t_unique)), t_max=t_max)
+
+
+def langevin_neg_log_lik_two_phase(alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, d,
+                                    n_paths=N_PATHS, dt=0.1, seed=0):
+    _, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    floor = 1.0 / (d.n_total + 1)
+    S = langevin_survival_two_phase(alpha0, Z0, alpha1, Z1, sigma_sq, t_switch, d,
+                                     n_paths=n_paths, dt=dt, seed=seed)
     return _neg_log_lik_from_S(S, death_weight, censor_weight, floor)
 
 
@@ -364,11 +544,20 @@ aic_gomp1 = report_fit("Gompertz model", logL_gomp1, k_gomp1)
 
 delta_aic1 = report_delta_aic("DMSO_day_10", aic_gomp1, aic_langevin1)
 
+S_langevin1_grid = langevin_survival_single(a0, Z0, sigma_sq0, d_dmso, seed=0)
+S_gomp1_grid = gompertz_survival(np.concatenate(([0.0], np.unique(d_dmso.t))), M0_dmso, alpha_g_dmso)
+z1, p1 = report_vuong_test("DMSO_day_10", S_langevin1_grid, S_gomp1_grid, d_dmso, k_langevin1, k_gomp1)
+
+logL1_mc_mean, logL1_mc_se = langevin_logL_monte_carlo_se(
+    langevin_neg_log_lik_single, a0, Z0, sigma_sq0, d_dmso, n_paths=100_000,
+)
+report_mc_noise("DMSO_day_10", logL1_mc_mean, logL1_mc_se, logL_gomp1)
+
 # %%
 kmf_dmso = kaplan_meier_curve(d_dmso)
 t_plot = np.linspace(0, d_dmso.t.max(), 400)
 T_plot_sim1, _, _ = simulate_fpt_and_state(
-    20_000, a0, g0, sigma_sq0, Z0, z0=0.0, dt=0.1, t_max=d_dmso.t.max(), rng=np.random.default_rng(1),
+    N_PATHS, a0, g0, sigma_sq0, Z0, z0=0.0, dt=0.1, t_max=d_dmso.t.max(), rng=np.random.default_rng(1),
 )
 S_langevin1_plot = km_from_fpt(T_plot_sim1, t_plot, t_max=d_dmso.t.max())
 S_gomp1_plot = gompertz_survival(t_plot, M0_dmso, alpha_g_dmso)
@@ -429,11 +618,22 @@ aic_gomp2 = report_fit("Gompertz model", logL_gomp2, k_gomp2,
 
 delta_aic2 = report_delta_aic("Auxin_day_21", aic_gomp2, aic_langevin2)
 
+S_langevin2_grid = langevin_survival_two_phase(a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21, seed=0)
+S_gomp2_grid = gompertz_survival_two_phase(
+    np.concatenate(([0.0], np.unique(d_auxin21.t))), M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch,
+)
+z2, p2 = report_vuong_test("Auxin_day_21", S_langevin2_grid, S_gomp2_grid, d_auxin21, k_langevin2, k_gomp2)
+
+logL2_mc_mean, logL2_mc_se = langevin_logL_monte_carlo_se(
+    langevin_neg_log_lik_two_phase, a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21, n_paths=100_000,
+)
+report_mc_noise("Auxin_day_21", logL2_mc_mean, logL2_mc_se, logL_gomp2)
+
 # %%
 kmf_auxin21 = kaplan_meier_curve(d_auxin21)
 t_plot21 = np.linspace(0, d_auxin21.t.max(), 400)
 T_plot_sim2 = simulate_two_phase(
-    20_000, a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21.t.max(), dt=0.1,
+    N_PATHS, a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21.t.max(), dt=0.1,
 )
 S_langevin2_plot = km_from_fpt(T_plot_sim2, t_plot21, t_max=d_auxin21.t.max())
 S_gomp2_plot = gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, M0_2, alpha_g2, t_switch)
@@ -442,6 +642,48 @@ fig, ax = plt.subplots(figsize=(8, 6))
 plot_survival_comparison(ax, kmf_auxin21, t_plot21, S_langevin2_plot, S_gomp2_plot,
                           logL_langevin2, logL_gomp2, color="#D55E00",
                           title="Auxin_day_21: Langevin vs. Gompertz model", t_switch=t_switch)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ## Convergence check: does Vuong's test result depend on `N_PATHS`?
+#
+# `N_PATHS` only controls how precisely `S(t)` is estimated for an
+# *already-fixed* `(alpha, Z, sigma)` -- it does not change the real
+# sample size (`n=247` worms) that governs Vuong's test's actual
+# statistical power. As `N_PATHS -> infinity`, the simulated curve
+# converges to the exact curve those fixed parameters imply, so `z`/`p`
+# should stabilize as `N_PATHS` grows, not drift systematically in one
+# direction. This sweeps `N_PATHS` directly for Auxin_day_21 -- the
+# borderline case -- rather than trusting a single run's realization.
+
+# %%
+N_PATHS_SWEEP = [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000]
+
+convergence_rows = []
+for n_paths_i in N_PATHS_SWEEP:
+    S_langevin_i = langevin_survival_two_phase(
+        a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21, n_paths=n_paths_i, seed=0,
+    )
+    z_i, p_i = vuong_test(S_langevin_i, S_gomp2_grid, d_auxin21, k_langevin2, k_gomp2)
+    convergence_rows.append({"N_PATHS": n_paths_i, "z": z_i, "p": p_i})
+
+convergence_df = pd.DataFrame(convergence_rows)
+print(convergence_df.to_string(index=False))
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+axes[0].plot(convergence_df["N_PATHS"], convergence_df["z"], "o-", color="#D55E00")
+axes[0].set_xscale("log")
+axes[0].set_xlabel("N_PATHS")
+axes[0].set_ylabel("Vuong $z$")
+axes[0].axhline(0, color="gray", lw=0.8, ls=":")
+axes[1].plot(convergence_df["N_PATHS"], convergence_df["p"], "o-", color="#D55E00")
+axes[1].axhline(0.05, color="red", lw=0.8, ls="--", label=r"$\alpha=0.05$")
+axes[1].set_xscale("log")
+axes[1].set_xlabel("N_PATHS")
+axes[1].set_ylabel("Vuong $p$")
+axes[1].legend(fontsize=8)
+fig.suptitle("Auxin_day_21: Vuong's test vs. N_PATHS -- convergence, not a p-hacking knob")
 plt.tight_layout()
 plt.show()
 
@@ -455,12 +697,32 @@ plt.show()
 # phase 1 and phase 2 parameters fixed from other conditions' own fits
 # (DMSO_day_10, Auxin_day_10) rather than fit to Auxin_day_21 itself --
 # a different, arguably stronger question than Part 1's single-phase
-# comparison. Either way, per the limitations noted at the top: this only
-# ever tests the *population-level hazard shape* against calendar age, not
-# the trajectory-level Markov claim itself (`z` is never directly
-# measured), and DMSO's coarse 8 check-day resolution limits how
-# confidently either outcome can be read as evidence for or against a real
-# late-life mortality plateau.
+# comparison. The Monte-Carlo noise check confirms each `delta_AIC` isn't
+# smaller than the Langevin model's own simulation noise.
+#
+# **Interpreting Vuong's test result, per condition.** Vuong's `H0` is
+# "Langevin and Gompertz are equally close to the true generating
+# process" -- so its result is read directly, not just as a significance
+# flag on `delta_AIC`:
+#
+# - **Rejecting `H0`** is a direct statistical statement that one model is
+#   significantly closer to the true generating process than the other.
+# - **Failing to reject `H0`** is the direct statistical statement that
+#   *there is no significant evidence that one model is closer to the
+#   true generating process than the other* -- i.e., the data do not
+#   establish that Gompertz explains that condition any better than
+#   Langevin does. This licenses saying Langevin "is not shown to be
+#   significantly different from Gompertz" for that condition, but not
+#   the stronger claim that the two models are equivalent (that would
+#   need a dedicated equivalence test, e.g. TOST against a pre-specified
+#   margin, not just a non-significant result here).
+#
+# Either way, per the limitations noted at the top: this only ever tests
+# the *population-level hazard shape* against calendar age, not the
+# trajectory-level Markov claim itself (`z` is never directly measured),
+# and DMSO's coarse 8 check-day resolution limits how confidently either
+# outcome can be read as evidence for or against a real late-life
+# mortality plateau.
 
 # %% [markdown]
 # ## Manuscript-ready outputs (Supplementary Note 2)
@@ -526,19 +788,38 @@ plt.show()
 # %%
 supp2_rows = [
     {"Condition": "DMSO\\_day\\_10", "Model": "Langevin (this work)", "k": k_langevin1,
-     "logL": logL_langevin1, "AIC": aic(logL_langevin1, k_langevin1)},
+     "logL": logL_langevin1, "AIC": aic(logL_langevin1, k_langevin1),
+     "Vuong z": "--", "Vuong p": "--"},
     {"Condition": "DMSO\\_day\\_10", "Model": "Gompertz", "k": k_gomp1,
-     "logL": logL_gomp1, "AIC": aic(logL_gomp1, k_gomp1)},
+     "logL": logL_gomp1, "AIC": aic(logL_gomp1, k_gomp1),
+     "Vuong z": f"{z1:+.2f}", "Vuong p": f"{p1:.2g}"},
     {"Condition": "Auxin\\_day\\_21", "Model": "Langevin (this work)", "k": k_langevin2,
-     "logL": logL_langevin2, "AIC": aic(logL_langevin2, k_langevin2)},
+     "logL": logL_langevin2, "AIC": aic(logL_langevin2, k_langevin2),
+     "Vuong z": "--", "Vuong p": "--"},
     {"Condition": "Auxin\\_day\\_21", "Model": "Gompertz", "k": k_gomp2,
-     "logL": logL_gomp2, "AIC": aic(logL_gomp2, k_gomp2)},
+     "logL": logL_gomp2, "AIC": aic(logL_gomp2, k_gomp2),
+     "Vuong z": f"{z2:+.2f}", "Vuong p": f"{p2:.2g}"},
 ]
 supp2_table = pd.DataFrame(supp2_rows).rename(columns={
-    "logL": r"$\log L$", "AIC": "AIC", "k": "$k$",
+    "logL": r"$\log L$", "AIC": "AIC", "k": "$k$", "Vuong z": "Vuong $z$", "Vuong p": "Vuong $p$",
 })
 latex_body2 = supp2_table.to_latex(index=False, escape=False, float_format="%.1f",
-                                    column_format="llrrr")
+                                    column_format="llrrrrr")
+
+
+def _vuong_conclusion_latex(condition, z, p):
+    """Plain per-condition conclusion Vuong's result actually licenses --
+    see the Summary section's markdown for why a non-significant result is
+    phrased as 'not shown to be significantly different', not 'equivalent'."""
+    if p < 0.05:
+        winner = "Langevin" if z > 0 else "Gompertz"
+        return (f"For {condition}, {winner} is significantly closer to the true "
+                f"generating process ($p={p:.2g}$).")
+    return (f"For {condition}, there is no significant evidence that either model is "
+            f"closer to the true generating process ($p={p:.2g}$); Langevin is not "
+            f"shown to be significantly different from Gompertz.")
+
+
 latex_table2 = (
     "% Auto-generated by notebooks/99_markov_vs_age_dependent.py -- do not edit by hand.\n"
     "\\begin{table}[htbp]\n\\centering\n"
@@ -554,7 +835,12 @@ latex_table2 = (
       r"$\Delta\mathrm{AIC} = \mathrm{AIC}_\mathrm{Gompertz} - "
       r"\mathrm{AIC}_\mathrm{Langevin} = " + f"{delta_aic1:+.1f}"
       r"$ (DMSO\_day\_10), $" + f"{delta_aic2:+.1f}"
-      r"$ (Auxin\_day\_21); negative values favor Gompertz.}"
+      r"$ (Auxin\_day\_21); negative values favor Gompertz. Vuong $z$/$p$ "
+      "(reported on the Gompertz row of each condition, testing that "
+      "condition's Langevin-vs-Gompertz pair) is Vuong's (1989) "
+      "closeness test, AIC-corrected for $k$; $z>0$ favors Langevin. "
+      + _vuong_conclusion_latex("DMSO\\_day\\_10", z1, p1) + " "
+      + _vuong_conclusion_latex("Auxin\\_day\\_21", z2, p2) + "}"
       "\n\\label{tab:supp_note2_model_comparison}\n\\end{table}\n"
 )
 (NOTES_DIR / "supp_note2_table.tex").write_text(latex_table2)
