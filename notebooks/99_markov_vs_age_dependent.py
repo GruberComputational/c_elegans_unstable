@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.19.5
 #   kernelspec:
 #     display_name: dynamics
 #     language: python
@@ -63,12 +63,17 @@
 #    model's phase-2 dynamics there are exactly Part 2's own Auxin_day_10
 #    fit, reused on the reasoning that worms switched onto auxin at day 21
 #    settle into the same post-auxin dynamics as worms given auxin at day
-#    10. The Gompertz counterpart mirrors this exactly: phase 1 fixed at
-#    Part 1's own DMSO Gompertz fit, phase 2 fixed at Part 2's own
-#    Gompertz fit to Auxin_day_10. Neither model touches Auxin_day_21's
-#    data at all -- both make a genuine out-of-sample prediction for that
-#    condition, so `k=0` for both and the comparison reduces to a direct
-#    log-likelihood comparison.
+#    10. The Gompertz counterpart mirrors this as closely as its hazard
+#    shape allows: phase 1 is Part 1's own DMSO Gompertz fit in full,
+#    phase 2 reuses only Part 2's fitted mortality-rate-doubling constant
+#    (`alpha_g`) from the Auxin_day_10 fit, while the baseline mortality
+#    `M0` stays fixed at DMSO_day_10's own value throughout -- a day-21
+#    worm carries forward its existing DMSO baseline hazard rather than
+#    jumping to Auxin_day_10's own baseline at the moment of intervention.
+#    Neither model touches Auxin_day_21's data at all -- both make a
+#    genuine out-of-sample prediction for that condition, so `k=0` for
+#    both and the comparison reduces to a direct log-likelihood
+#    comparison.
 #
 # All three parts use the *same* discrete-time, grouped-data likelihood
 # construction for both model families (interval probability mass for
@@ -130,8 +135,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from lifelines import NelsonAalenFitter
 from scipy.optimize import differential_evolution, minimize
-from scipy.stats import norm
+from scipy.stats import linregress, norm
 
 NOTEBOOK_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 SRC_DIR = NOTEBOOK_DIR.parent / "src"
@@ -185,6 +191,29 @@ def _grouped_death_censor_weights(d):
     return t_unique, death_weight, censor_weight
 
 
+def age_group_table(d):
+    """Per-observed-age N at risk / died / censored for one condition --
+    the raw counts behind every hazard/fit in this notebook (deaths and
+    censoring at each age come straight from `d`; `n_at_risk` is everyone
+    not yet dead or censored *before* that age, i.e. the same risk set a
+    Kaplan-Meier/Nelson-Aalen/Cox estimator would use)."""
+    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    n_at_risk = d.n_total - np.concatenate(([0.0], np.cumsum(death_weight + censor_weight)[:-1]))
+    return pd.DataFrame({
+        "age": t_unique.astype(int),
+        "n_at_risk": n_at_risk.astype(int),
+        "n_died": death_weight.astype(int),
+        "n_censored": censor_weight.astype(int),
+    })
+
+
+# %%
+for name, d in raw_data.items():
+    print(f"\n{name}:")
+    print(age_group_table(d).to_string(index=False))
+
+
+# %%
 def _log_lik_contributions_from_S(S_at_grid, death_weight, censor_weight, floor):
     """
     Per-observation-type log-likelihood values and their worm counts,
@@ -367,19 +396,25 @@ def report_mc_noise(condition, logL_mean, logL_se, logL_gomp):
 # survival `S(t) = exp(-(M0/alpha_g)*(exp(alpha_g*t) - 1))` -- an explicit
 # function of calendar age, no state variable or mechanism at all.
 #
-# The two-piece version does **not** restart the Gompertz clock at
-# `t_switch`: both `(M0_1, alpha_g1)` and `(M0_2, alpha_g2)` are always
-# evaluated at the worm's actual calendar age `t`, exactly as each was
-# fit (phase 1 against DMSO_day_10's own ages, phase 2 against
-# Auxin_day_10's own ages). For `t > t_switch`, phase 2's *own* survival
-# curve `S2(t)` is rescaled by `S1(t_switch) / S2(t_switch)` so `S` stays
-# continuous at the switch -- age is the shared "state" both phases refer
-# to, so switching hazard functions at a fixed age is the direct Gompertz
-# analogue of switching `(alpha, g)` at `t_switch` for a continuously
-# evolving `z` in the Langevin model. Resetting the clock to `t -
-# t_switch` instead would evaluate phase 2's curve over the wrong age
-# range entirely -- the near-flat, low-hazard *early* part of a curve fit
-# to ages 10-42, rather than the ages 21-39 actually being predicted.
+# **The two-piece version continues from the mortality *rate itself*
+# reached at `t_switch`, not from a shared baseline `M0`.** A day-21 worm
+# has already accumulated 21 days of DMSO-driven mortality risk -- it
+# can't lose that damage at the moment of intervention, so its hazard
+# `M(t)` cannot legitimately *drop* at `t_switch`. (An earlier version of
+# this construction held `M0` fixed across both phases and switched only
+# `alpha_g`; because `M(t) = M0*exp(alpha_g*t)` moves the whole curve, not
+# just its slope, reusing the same `M0` with a *shallower* post-switch
+# `alpha_g` made the hazard drop discontinuously right at the switch --
+# biologically backwards, and the actual bug this section fixes.) Instead:
+# phase 1 is the ordinary Gompertz hazard `M1(t) = M0*exp(alpha_g1*t)` up
+# to `t_switch`; phase 2 picks up exactly at phase 1's own hazard level,
+# `M_switch = M1(t_switch)`, and grows from there at the new rate
+# `alpha_g2`: `M2(t) = M_switch*exp(alpha_g2*(t - t_switch))`. `M(t)` is
+# therefore continuous at the switch *by construction* (`M2(t_switch) =
+# M_switch = M1(t_switch)` exactly) and never decreases anywhere, for any
+# `alpha_g1, alpha_g2 > 0` -- only the *rate of increase* changes at
+# `t_switch`, matching the Langevin model's own switch (`(alpha, g)`
+# change, but `z` itself carries forward continuously, never resetting).
 
 # %%
 def gompertz_survival(t, M0, alpha_g):
@@ -387,26 +422,41 @@ def gompertz_survival(t, M0, alpha_g):
     return np.exp(-(M0 / alpha_g) * np.expm1(alpha_g * t))
 
 
-def gompertz_survival_two_phase(t, M0_1, alpha_g1, M0_2, alpha_g2, t_switch):
+def gompertz_hazard_two_phase(t, M0, alpha_g1, alpha_g2, t_switch):
+    """Mortality rate `M(t)`, continuous at `t_switch` by construction:
+    phase 2 continues from phase 1's own hazard level at the switch,
+    `M_switch = M0*exp(alpha_g1*t_switch)`, growing at the new rate
+    `alpha_g2` from there -- never a baseline reset, never a drop."""
     t = np.asarray(t, dtype=float)
-    S1_at_switch = gompertz_survival(t_switch, M0_1, alpha_g1)
-    S2_at_switch = gompertz_survival(t_switch, M0_2, alpha_g2)
-    S = np.where(
-        t <= t_switch,
-        gompertz_survival(t, M0_1, alpha_g1),
-        S1_at_switch * gompertz_survival(t, M0_2, alpha_g2) / S2_at_switch,
-    )
-    return S
+    M1 = M0 * np.exp(alpha_g1 * t)
+    M_switch = M0 * np.exp(alpha_g1 * t_switch)
+    M2 = M_switch * np.exp(alpha_g2 * (t - t_switch))
+    return np.where(t <= t_switch, M1, M2)
 
 
-def gompertz_neg_log_lik_two_phase(M0_1, alpha_g1, M0_2, alpha_g2, t_switch, d):
+def gompertz_cumulative_hazard_two_phase(t, M0, alpha_g1, alpha_g2, t_switch):
+    """Cumulative hazard `H(t) = integral_0^t M(s) ds` for the
+    continuous-mortality-rate two-phase model above."""
+    t = np.asarray(t, dtype=float)
+    H1 = (M0 / alpha_g1) * np.expm1(alpha_g1 * t)
+    H1_switch = (M0 / alpha_g1) * np.expm1(alpha_g1 * t_switch)
+    M_switch = M0 * np.exp(alpha_g1 * t_switch)
+    H2 = H1_switch + (M_switch / alpha_g2) * np.expm1(alpha_g2 * (t - t_switch))
+    return np.where(t <= t_switch, H1, H2)
+
+
+def gompertz_survival_two_phase(t, M0, alpha_g1, alpha_g2, t_switch):
+    return np.exp(-gompertz_cumulative_hazard_two_phase(t, M0, alpha_g1, alpha_g2, t_switch))
+
+
+def gompertz_neg_log_lik_two_phase(M0, alpha_g1, alpha_g2, t_switch, d):
     """Negative log-likelihood of a *fixed* (not fit) two-phase Gompertz
     model against `d` -- the Gompertz counterpart of
     `langevin_neg_log_lik_two_phase` below, same signature shape, so Part 3
     can evaluate both model families identically."""
     t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
     floor = 1.0 / (d.n_total + 1)
-    S = gompertz_survival_two_phase(np.concatenate(([0.0], t_unique)), M0_1, alpha_g1, M0_2, alpha_g2, t_switch)
+    S = gompertz_survival_two_phase(np.concatenate(([0.0], t_unique)), M0, alpha_g1, alpha_g2, t_switch)
     return _neg_log_lik_from_S(S, death_weight, censor_weight, floor)
 
 
@@ -526,6 +576,68 @@ def plot_survival_comparison(ax, kmf, t_plot, S_langevin, S_gompertz,
 
 
 # %% [markdown]
+# ### Shared log-mortality plot
+#
+# The survival-curve overlays above compress each model's entire hazard
+# history into one number (`logL`) and can visually hide *where* in age
+# the two hazard shapes actually differ. Gompertz's hallmark is a
+# **straight line** on a log-mortality plot (`log M(t) = log(M0) +
+# alpha_g*t`, linear in `t` by construction); the Langevin model has no
+# such guarantee -- its implied hazard is whatever shape a state-dependent
+# process happens to produce, read off numerically as `-d/dt log S(t)`
+# from its own simulated/closed-form survival curve. Overlaying both
+# against an empirical (actuarial) hazard estimated directly from the real
+# grouped data shows directly whether the real mortality trajectory is as
+# log-linear as Gompertz assumes, or curves/plateaus the way the
+# state-dependent model can (and, for the two-phase Auxin_day_21 case,
+# reveals the discontinuous *jump* in Gompertz's hazard at `t_switch` that
+# switching only `alpha_g` while holding `M0` fixed actually produces --
+# survival stays continuous there, but the instantaneous mortality rate
+# itself does not).
+
+# %%
+def empirical_hazard(d):
+    """Actuarial discrete hazard estimate per observed age bin: deaths /
+    (at-risk * bin width) -- directly comparable in units (per day) to the
+    Gompertz/Langevin continuous hazard `M(t)`. `at_risk` at bin `i` is
+    every worm not yet dead or censored before that bin's age."""
+    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    at_risk = d.n_total - np.concatenate(([0.0], np.cumsum(death_weight + censor_weight)[:-1]))
+    t_prev = np.concatenate(([0.0], t_unique[:-1]))
+    dt = t_unique - t_prev
+    hazard = death_weight / (at_risk * dt)
+    return t_unique, hazard
+
+
+def hazard_from_survival(t, S):
+    """Numerical hazard `h(t) = -d/dt log S(t)` via central differences on
+    an already-smooth simulated/closed-form `S(t)` curve (evaluated on a
+    fine, evenly-ish spaced `t` grid, e.g. the `t_plot*` grids used for the
+    survival-comparison plots above)."""
+    t = np.asarray(t, dtype=float)
+    logS = np.log(np.clip(S, 1e-300, 1.0))
+    h = np.empty_like(t)
+    h[1:-1] = -(logS[2:] - logS[:-2]) / (t[2:] - t[:-2])
+    h[0] = -(logS[1] - logS[0]) / (t[1] - t[0])
+    h[-1] = -(logS[-1] - logS[-2]) / (t[-1] - t[-2])
+    return h
+
+
+def plot_log_mortality_comparison(ax, d, t_plot, S_langevin, S_gompertz, color, title, t_switch=None):
+    t_emp, h_emp = empirical_hazard(d)
+    ax.scatter(t_emp, h_emp, color=color, s=22, zorder=5, label="empirical hazard")
+    ax.plot(t_plot, hazard_from_survival(t_plot, S_langevin), ls="--", color="black", label="Langevin model")
+    ax.plot(t_plot, hazard_from_survival(t_plot, S_gompertz), ls="-.", color="tab:red", label="Gompertz model")
+    if t_switch is not None:
+        ax.axvline(t_switch, color="gray", lw=1, ls=":", label=f"intervention start (day {t_switch:.0f})")
+    ax.set_xlabel("Time (days)")
+    ax.set_ylabel("Mortality rate $M(t)$")
+    ax.set_yscale("log")
+    ax.set_title(title)
+    ax.legend(fontsize=8)
+
+
+# %% [markdown]
 # ## Part 1: DMSO_day_10 baseline (single phase)
 #
 # Our model's `(alpha, g, sigma)` are `0_auto_fit_parameters_mle.py`'s own
@@ -557,6 +669,11 @@ k_gomp1 = 2
 print(f"Gompertz fit: M0={M0_dmso:.4g}, alpha_g={alpha_g_dmso:.4g}")
 aic_gomp1 = report_fit("Gompertz model", logL_gomp1, k_gomp1)
 
+mrdt_gomp1 = np.log(2) / alpha_g_dmso
+mrdt_langevin1 = np.log(2) / a0
+print(f"Mortality rate doubling time (Gompertz, ln2/alpha_g): {mrdt_gomp1:.3g} days")
+print(f"Mortality rate doubling time (Langevin, ln2/alpha):   {mrdt_langevin1:.3g} days")
+
 delta_aic1 = report_delta_aic("DMSO_day_10", aic_gomp1, aic_langevin1)
 
 S_langevin1_grid = langevin_survival_single(a0, Z0, sigma_sq0, d_dmso, seed=0)
@@ -583,6 +700,61 @@ plot_survival_comparison(ax, kmf_dmso, t_plot, S_langevin1_plot, S_gomp1_plot,
                           title="DMSO_day_10: Langevin vs. Gompertz model")
 plt.tight_layout()
 plt.show()
+
+# %%
+fig, ax = plt.subplots(figsize=(8, 6))
+plot_log_mortality_comparison(ax, d_dmso, t_plot, S_langevin1_plot, S_gomp1_plot,
+                               color="#0072B2", title="DMSO_day_10: log mortality rate")
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### Sanity check: mortality-doubling rate via lifelines' Cox/Nelson-Aalen baseline hazard
+#
+# A direct `lifelines.CoxPHFitter` fit doesn't work here: Cox's partial
+# likelihood estimates a hazard *ratio* from covariates that vary *within*
+# each risk set at a given time, but DMSO_day_10 is a single homogeneous
+# cohort with no such covariate -- age is duration itself, so there's
+# nothing left to regress on (confirmed directly: fitting `CoxPHFitter` on
+# this data with no covariates raises a convergence error from a singular
+# information matrix, not a code bug).
+#
+# What Cox's own baseline hazard reduces to with zero covariates is
+# exactly the **Nelson-Aalen estimator** (lifelines' documented
+# equivalence to the Breslow estimator) -- `lifelines.NelsonAalenFitter`
+# below gives that same nonparametric cumulative-hazard curve, independent
+# of our own hand-rolled `empirical_hazard` above (and using an exact
+# tie-correction for concurrent deaths within a risk set, `sum 1/(n-j)`,
+# rather than our simpler `d/n`, so it's not a redundant recomputation).
+# Fitting a straight line to `log(hazard)` vs. age (Gompertz's own
+# defining assumption) then gives a second, independent estimate of
+# `alpha_g` and the implied MRDT, to check against our own MLE Gompertz
+# fit above.
+
+# %%
+def cox_equivalent_log_hazard_slope(d):
+    """Nelson-Aalen cumulative hazard (== CoxPH's own baseline hazard with
+    no covariates) -> per-bin discrete hazard -> OLS fit of log(hazard) vs.
+    age, returning (alpha_g, M0, r_squared) for the fitted line."""
+    naf = NelsonAalenFitter()
+    naf.fit(durations=d.t, event_observed=d.event_observed, weights=d.weight)
+    H = naf.cumulative_hazard_.iloc[:, 0]
+    t_grid = H.index.to_numpy()
+    keep = t_grid > 0  # drop the fitter's own t=0, H=0 anchor row (dt=0 there)
+    t_grid, H = t_grid[keep], H.to_numpy()[keep]
+    dt = np.diff(np.concatenate(([0.0], t_grid)))
+    hazard = np.diff(np.concatenate(([0.0], H))) / dt
+
+    mask = hazard > 0
+    fit = linregress(t_grid[mask], np.log(hazard[mask]))
+    return fit.slope, np.exp(fit.intercept), fit.rvalue ** 2
+
+
+alpha_g_cox1, M0_cox1, r2_cox1 = cox_equivalent_log_hazard_slope(d_dmso)
+mrdt_cox1 = np.log(2) / alpha_g_cox1
+print(f"Cox/Nelson-Aalen log-hazard fit: M0={M0_cox1:.4g}, alpha_g={alpha_g_cox1:.4g}  (R^2={r2_cox1:.3f})")
+print(f"Mortality rate doubling time (Cox/Nelson-Aalen): {mrdt_cox1:.3g} days")
+print(f"  vs. our own Gompertz MLE fit: alpha_g={alpha_g_dmso:.4g}, MRDT={mrdt_gomp1:.3g} days")
 
 # %% [markdown]
 # ## Part 2: Auxin_day_10 baseline (single phase)
@@ -617,6 +789,11 @@ k_gomp2 = 2
 print(f"Gompertz fit: M0={M0_a10:.4g}, alpha_g={alpha_g_a10:.4g}")
 aic_gomp2 = report_fit("Gompertz model", logL_gomp2, k_gomp2)
 
+mrdt_gomp2 = np.log(2) / alpha_g_a10
+mrdt_langevin2 = np.log(2) / alpha1
+print(f"Mortality rate doubling time (Gompertz, ln2/alpha_g): {mrdt_gomp2:.3g} days")
+print(f"Mortality rate doubling time (Langevin, ln2/alpha):   {mrdt_langevin2:.3g} days")
+
 delta_aic2 = report_delta_aic("Auxin_day_10", aic_gomp2, aic_langevin2)
 
 S_langevin2_grid = langevin_survival_single(alpha1, Z1, sigma_sq0, d_auxin10, seed=0)
@@ -645,6 +822,13 @@ plot_survival_comparison(ax, kmf_auxin10, t_plot_a10, S_langevin2_plot, S_gomp2_
 plt.tight_layout()
 plt.show()
 
+# %%
+fig, ax = plt.subplots(figsize=(8, 6))
+plot_log_mortality_comparison(ax, d_auxin10, t_plot_a10, S_langevin2_plot, S_gomp2_plot,
+                               color="#009E73", title="Auxin_day_10: log mortality rate")
+plt.tight_layout()
+plt.show()
+
 # %% [markdown]
 # ## Part 3: DMSO_day_10 -> Auxin_day_21 (two phase, at the intervention)
 #
@@ -655,12 +839,18 @@ plt.show()
 # day 10.
 #
 # To keep this comparison matched, the Gompertz counterpart mirrors that
-# construction exactly: phase 1 fixed at Part 1's own DMSO Gompertz fit,
-# phase 2 fixed at Part 2's own Gompertz fit to Auxin_day_10 (`M0_a10,
-# alpha_g_a10`). **Neither model touches Auxin_day_21's data at all** --
-# both make a genuine out-of-sample prediction for that condition, so
-# `k=0` for both and the comparison reduces to a direct log-likelihood
-# comparison.
+# reasoning as closely as the Gompertz hazard shape allows: phase 1 is
+# Part 1's own DMSO Gompertz fit in full (`M0_dmso, alpha_g_dmso`); phase 2
+# reuses only Part 2's fitted mortality-rate-doubling constant
+# (`alpha_g_a10`) from the Auxin_day_10 fit, applied from the mortality
+# *level* phase 1 has already reached at `t_switch` -- not from a shared
+# baseline `M0` (see "Gompertz hazard model" above for why: a day-21 worm
+# carries forward its accumulated DMSO mortality risk; only the future
+# rate of increase changes at intervention). `M(t)` is therefore
+# continuous at `t_switch` and never decreases. **Neither model touches
+# Auxin_day_21's data at all** -- both make a genuine out-of-sample
+# prediction for that condition, so `k=0` for both and the comparison
+# reduces to a direct log-likelihood comparison.
 
 # %%
 t_switch = 21.0
@@ -672,17 +862,20 @@ k_langevin3 = 0
 aic_langevin3 = report_fit("Langevin model", logL_langevin3, k_langevin3,
                             note="both phases fixed -- neither fit to Auxin_day_21")
 
-nll_gomp3 = gompertz_neg_log_lik_two_phase(M0_dmso, alpha_g_dmso, M0_a10, alpha_g_a10, t_switch, d_auxin21)
+nll_gomp3 = gompertz_neg_log_lik_two_phase(M0_dmso, alpha_g_dmso, alpha_g_a10, t_switch, d_auxin21)
 logL_gomp3 = -nll_gomp3
 k_gomp3 = 0
 aic_gomp3 = report_fit("Gompertz model", logL_gomp3, k_gomp3,
                         note="both phases fixed -- neither fit to Auxin_day_21")
 
+print(f"Mortality rate doubling time (Gompertz):  {mrdt_gomp1:.3g} -> {mrdt_gomp2:.3g} days at t_switch={t_switch:.0f}")
+print(f"Mortality rate doubling time (Langevin):  {mrdt_langevin1:.3g} -> {mrdt_langevin2:.3g} days at t_switch={t_switch:.0f}")
+
 delta_aic3 = report_delta_aic("Auxin_day_21", aic_gomp3, aic_langevin3)
 
 S_langevin3_grid = langevin_survival_two_phase(a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21, seed=0)
 S_gomp3_grid = gompertz_survival_two_phase(
-    np.concatenate(([0.0], np.unique(d_auxin21.t))), M0_dmso, alpha_g_dmso, M0_a10, alpha_g_a10, t_switch,
+    np.concatenate(([0.0], np.unique(d_auxin21.t))), M0_dmso, alpha_g_dmso, alpha_g_a10, t_switch,
 )
 z3, p3 = report_vuong_test("Auxin_day_21", S_langevin3_grid, S_gomp3_grid, d_auxin21, k_langevin3, k_gomp3)
 
@@ -698,12 +891,60 @@ T_plot_sim3 = simulate_two_phase(
     N_PATHS, a0, Z0, alpha1, Z1, sigma_sq0, t_switch, d_auxin21.t.max(), dt=0.1,
 )
 S_langevin3_plot = km_from_fpt(T_plot_sim3, t_plot21, t_max=d_auxin21.t.max())
-S_gomp3_plot = gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, M0_a10, alpha_g_a10, t_switch)
+S_gomp3_plot = gompertz_survival_two_phase(t_plot21, M0_dmso, alpha_g_dmso, alpha_g_a10, t_switch)
 
 fig, ax = plt.subplots(figsize=(8, 6))
 plot_survival_comparison(ax, kmf_auxin21, t_plot21, S_langevin3_plot, S_gomp3_plot,
                           logL_langevin3, logL_gomp3, color="#D55E00",
                           title="Auxin_day_21: Langevin vs. Gompertz model", t_switch=t_switch)
+plt.tight_layout()
+plt.show()
+
+# %%
+M_switch_level = gompertz_hazard_two_phase(t_switch, M0_dmso, alpha_g_dmso, alpha_g_a10, t_switch)
+print(f"Continuity check for Auxin_day_21 at t_switch={t_switch:.0f}: "
+      f"M(21-)=M(21+)={float(M_switch_level):.4g} (by construction)")
+
+fig, ax = plt.subplots(figsize=(8, 6))
+plot_log_mortality_comparison(ax, d_auxin21, t_plot21, S_langevin3_plot, S_gomp3_plot,
+                               color="#D55E00", title="Auxin_day_21: log mortality rate", t_switch=t_switch)
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### Diagnostic: DMSO, Auxin_day_10, and the switch, as log-mortality lines
+#
+# Isolates the Gompertz machinery from everything else (no Langevin curve,
+# no empirical scatter) -- three lines:
+#
+# 1. `DMSO_day_10`'s own fitted line (`M0_dmso, alpha_g_dmso`).
+# 2. `Auxin_day_10`'s own fitted line (`M0_a10, alpha_g_a10`) -- a
+#    different y-intercept *and* slope from DMSO's line, describing worms
+#    that received auxin from day 0.
+# 3. The switch curve: line 1 up to `t_switch`, then continuing from line
+#    1's own value *at* `t_switch` (not from `M0_dmso` or `M0_a10`) at the
+#    new rate `alpha_g_a10`. It therefore leaves `t_switch` at exactly
+#    line 1's height, not line 2's -- lines 2 and 3 describe different
+#    worms (auxin from day 0 vs. auxin only from day 21) and are not
+#    expected to coincide at any age; the only continuity guarantee is
+#    between line 3 and line 1, at `t_switch`.
+
+# %%
+t_diag = np.linspace(0.01, 40, 400)
+M_dmso_line = M0_dmso * np.exp(alpha_g_dmso * t_diag)
+M_auxin10_line = M0_a10 * np.exp(alpha_g_a10 * t_diag)
+M_switch_line = gompertz_hazard_two_phase(t_diag, M0_dmso, alpha_g_dmso, alpha_g_a10, t_switch)
+
+fig, ax = plt.subplots(figsize=(8, 6))
+ax.plot(t_diag, M_dmso_line, color="#0072B2", lw=1.6, label="DMSO_day_10 (own fit)")
+ax.plot(t_diag, M_auxin10_line, color="#009E73", lw=1.6, label="Auxin_day_10 (own fit)")
+ax.plot(t_diag, M_switch_line, color="#D55E00", lw=1.8, ls="--", label="Switch (continues from DMSO(21), alpha_g_a10)")
+ax.axvline(t_switch, color="gray", lw=1, ls=":", label=f"intervention start (day {t_switch:.0f})")
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Mortality rate $M(t)$")
+ax.set_yscale("log")
+ax.set_title("Gompertz diagnostic: DMSO vs. Auxin_day_10 vs. the continuous-hazard switch")
+ax.legend(fontsize=8)
 plt.tight_layout()
 plt.show()
 
