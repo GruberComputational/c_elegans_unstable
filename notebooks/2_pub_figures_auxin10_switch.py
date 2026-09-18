@@ -510,12 +510,12 @@ for (Tz, color, pos) in zip(ZOOM_DAYS, ROI_COLORS, INSET_POS):
     fig2.add_artist(conR)
 
 legend_handles = [
-    Line2D([0], [0], color=C_D1, lw=1.4, label=rf'Died stage 1  ($t \leq {tI_21:.0f}$)'),
-    Line2D([0], [0], color=C_D2, lw=1.4, label=rf'Died stage 2  ($t > {tI_21:.0f}$)'),
+    Line2D([0], [0], color=C_D1, lw=1.4, label=rf'Died stage 1  ($t \leq {tI_21:.2f}$)'),
+    Line2D([0], [0], color=C_D2, lw=1.4, label=rf'Died stage 2  ($t > {tI_21:.2f}$)'),
     Line2D([0], [0], color='darkred', lw=1.4, ls='--',
-           label=rf'$Z$: ${z_h0:.0f} \to {z_h1:.0f}$'),
+           label=rf'$z_{{max}}$: ${z_h0:.2f} \to {z_h1:.2f}$'),
     Line2D([0], [0], color='royalblue', lw=1.2, ls=':',
-           label=rf'$z_m$: ${z_m0:.1f} \to {z_m1:.1f}$'),
+           label=rf'$z_m$: ${z_m0:.2f} \to {z_m1:.2f}$'),
 ]
 
 ax2.legend(handles=legend_handles, fontsize=7, loc='upper left',
