@@ -708,6 +708,116 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
+# ## Interval breakdown: where does each model's advantage come from?
+#
+# `delta_AIC`/Vuong's test each summarize a condition's comparison into
+# one number, but that number is a sum over very unevenly-sized,
+# unevenly-spaced age bins -- DMSO's 8 check-day ages range from a
+# handful of deaths to dozens (Limitation 2 at the top). A single summary
+# number can't say whether one model's advantage is spread evenly across
+# the observed lifespan or concentrated in a few bins -- particularly the
+# late, sparse ones, where a small number of worms can carry
+# disproportionate weight in a grouped-data likelihood. `lr_by_interval`
+# below breaks the same log-likelihood-ratio total that `vuong_test` sums
+# (`values_langevin - values_gompertz`) down by age, so this can be seen
+# directly rather than assumed.
+
+# %%
+def lr_by_interval(S_langevin, S_gompertz, d):
+    """
+    Per-age-bin contribution to the Langevin-vs-Gompertz log-likelihood
+    ratio -- `weight * (log f_langevin - log f_gompertz)`, summed over
+    each age's death and censoring contributions separately, at each of
+    `d`'s own observed ages. Summing the `lr_weighted` column reproduces
+    `vuong_test`'s log-likelihood-ratio total (its numerator before the
+    AIC correction) exactly. Positive `lr_weighted` favors Langevin at
+    that age; negative favors Gompertz -- same sign convention as
+    `vuong_test`.
+    """
+    t_unique, death_weight, censor_weight = _grouped_death_censor_weights(d)
+    floor = 1.0 / (d.n_total + 1)
+
+    def per_bin_values(S):
+        S = np.clip(S, floor, 1.0)
+        interval_mass = np.clip(S[:-1] - S[1:], floor, None)
+        return np.log(interval_mass), np.log(S[1:])
+
+    death_lang, censor_lang = per_bin_values(S_langevin)
+    death_gomp, censor_gomp = per_bin_values(S_gompertz)
+    lr_weighted = death_weight * (death_lang - death_gomp) + censor_weight * (censor_lang - censor_gomp)
+
+    return pd.DataFrame({
+        "age": t_unique,
+        "n_died": death_weight.astype(int),
+        "n_censored": censor_weight.astype(int),
+        "lr_weighted": lr_weighted,
+    })
+
+
+def summarize_breakdown(condition, breakdown):
+    print(f"\n{condition} -- per-age-bin log-likelihood ratio (Langevin - Gompertz):")
+    print(breakdown.to_string(index=False))
+    biggest = breakdown.loc[breakdown["lr_weighted"].abs().idxmax()]
+    print(f"  Largest single-bin contribution: age={biggest['age']:.0f} "
+          f"(n={biggest['n_died'] + biggest['n_censored']:.0f} worms), "
+          f"lr_weighted={biggest['lr_weighted']:+.2f} "
+          f"({'favors Langevin' if biggest['lr_weighted'] > 0 else 'favors Gompertz'}, "
+          f"{abs(biggest['lr_weighted']) / breakdown['lr_weighted'].abs().sum():.0%} of the total |lr|)")
+
+
+breakdown1 = lr_by_interval(S_langevin1_grid, S_gomp1_grid, d_dmso)
+breakdown2 = lr_by_interval(S_langevin2_grid, S_gomp2_grid, d_auxin10)
+breakdown3 = lr_by_interval(S_langevin3_grid, S_gomp3_grid, d_auxin21)
+summarize_breakdown("DMSO_day_10", breakdown1)
+summarize_breakdown("Auxin_day_10", breakdown2)
+summarize_breakdown("Auxin_day_21", breakdown3)
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharey=False)
+for ax, (name, breakdown) in zip(
+    axes, [("DMSO_day_10", breakdown1), ("Auxin_day_10", breakdown2), ("Auxin_day_21", breakdown3)],
+):
+    colors = ["#0072B2" if v > 0 else "#D55E00" for v in breakdown["lr_weighted"]]
+    ax.bar(breakdown["age"].astype(int).astype(str), breakdown["lr_weighted"], color=colors)
+    ax.axhline(0, color="black", lw=0.8)
+    ax.set_xlabel("Age (days)")
+    ax.set_title(name)
+axes[0].set_ylabel("logL ratio\n(Langevin - Gompertz)")
+fig.suptitle("Per-age-bin contribution to the logL ratio (blue = favors Langevin, orange = favors Gompertz)")
+plt.tight_layout()
+plt.show()
+
+# %% [markdown]
+# ### Robustness check: does the result survive dropping the latest, sparsest age bins?
+#
+# Re-run Vuong's test after progressively excluding each condition's own
+# latest observed ages -- exactly the bins the "concentrated in sparse,
+# late intervals" concern is about -- to test directly whether the
+# significant result depends on them, rather than eyeballing the bar
+# charts above.
+
+# %%
+def vuong_dropping_last_n_bins(S_a, S_b, d, k_a, k_b, n_drop):
+    t_unique = np.unique(d.t)
+    n_bins = len(t_unique)
+    age_mask = (np.arange(n_bins) < (n_bins - n_drop)) if n_drop > 0 else None
+    z, p = vuong_test(S_a, S_b, d, k_a, k_b, age_mask=age_mask)
+    dropped_ages = t_unique[n_bins - n_drop:] if n_drop > 0 else np.array([])
+    return z, p, dropped_ages
+
+
+for condition, S_lang, S_gomp, d, k_a, k_b in [
+    ("DMSO_day_10", S_langevin1_grid, S_gomp1_grid, d_dmso, k_langevin1, k_gomp1),
+    ("Auxin_day_10", S_langevin2_grid, S_gomp2_grid, d_auxin10, k_langevin2, k_gomp2),
+    ("Auxin_day_21", S_langevin3_grid, S_gomp3_grid, d_auxin21, k_langevin3, k_gomp3),
+]:
+    print(f"\n{condition}:")
+    for n_drop in [0, 1, 2, 3]:
+        z_d, p_d, dropped = vuong_dropping_last_n_bins(S_lang, S_gomp, d, k_a, k_b, n_drop)
+        dropped_str = f"dropping ages {dropped.astype(int).tolist()}" if n_drop else "full data"
+        sig = "significant" if p_d < 0.05 else "NOT significant"
+        print(f"  {dropped_str}: z={z_d:+.3f}  p={p_d:.3g}  ({sig} at alpha=0.05)")
+
+# %% [markdown]
 # ## Convergence check: does Vuong's test result depend on `N_PATHS`?
 #
 # `N_PATHS` only controls how precisely `S(t)` is estimated for an
