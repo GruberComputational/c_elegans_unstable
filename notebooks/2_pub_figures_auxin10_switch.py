@@ -65,6 +65,7 @@
 # figure set was originally sketched against.
 
 # %%
+import csv
 import sys
 import warnings
 from pathlib import Path
@@ -617,13 +618,19 @@ def _clip_near_floor(t, s, floor):
     below = np.where(s <= floor)[0]
     if below.size == 0:
         return t, s
-    cut = below[0] + 1
-    return t[:cut], s[:cut]
+    i = below[0]
+    if i == 0:
+        return t[:1], s[:1]
+    # End exactly at `floor` (linear interpolation across the crossing)
+    # rather than at the first grid point below it, which overshoots
+    # (e.g. 0.0098 instead of 0.01).
+    frac = (s[i - 1] - floor) / (s[i - 1] - s[i])
+    t_cross = t[i - 1] + frac * (t[i] - t[i - 1])
+    return np.append(t[:i], t_cross), np.append(s[:i], floor)
 
 
 fig3, ax3 = plt.subplots(figsize=(11 * cm, 8 * cm))
 gof_results = {}
-sim_endpoints = {}
 
 for name, col, T_sim, cond in conditions:
     t_emp, s_emp = cond['t_emp'], cond['S_emp']
@@ -633,7 +640,6 @@ for name, col, T_sim, cond in conditions:
 
     S_sim_plot = km_from_fpt(T_sim, t_eval, t_max=T_MAX)
     t_sim_c, s_sim_c = _clip_near_floor(t_eval, S_sim_plot, SIM_FLOOR)
-    sim_endpoints[name] = (t_sim_c[-1], s_sim_c[-1])
     # Plotted as a continuous line, not ax3.step: with N_KM=20000 the KM
     # estimate's individual steps are small enough that drawing them as a
     # staircase just looks jagged -- a plain line reads as the smooth
@@ -671,20 +677,43 @@ plt.show()
 # reported in the accompanying summary table rather than on the figure
 # itself. Experimental data are from Venz et al. \cite{Venz2021}.
 
+# %% [markdown]
+# **Supplementary Table S1 legend (draft).** **Goodness of fit of the
+# simulated survival curves.** Root-mean-square error (RMSE) and
+# Kolmogorov--Smirnov distance (KS, the maximum absolute difference)
+# between each simulated Kaplan--Meier curve and its corresponding
+# experimental Kaplan--Meier curve, evaluated at the experimental curve's
+# observed time points, for DMSO controls and cohorts receiving auxin from
+# day 10 or day 21. Both statistics are in units of survival probability
+# (0--1); lower values indicate closer agreement. Experimental data are
+# from Venz et al. \cite{Venz2021}.
+
 # %%
 gof_table = pd.DataFrame([
     {
         "Condition": name,
         "RMSE": gof_results[name]["rmse"],
         "KS": gof_results[name]["ks"],
-        "Sim. truncated at day": sim_endpoints[name][0],
-        "Sim. S(t) at truncation": sim_endpoints[name][1],
     }
     for name, *_ in conditions
 ]).set_index("Condition")
-gof_table.round(4).to_csv(TABLES_DIR / 'pub_table_goodness_of_fit_auxin10switch.csv')
-print(f"Goodness-of-fit summary (simulated vs. real, at real observed time points).\n"
-      f"Simulated curves truncated once S(t) drops to/below SIM_FLOOR ({SIM_FLOOR:.2%}):")
+TABLE_S1_LEGEND = (
+    "Supplementary Table S1. Goodness of fit of the simulated survival "
+    "curves. Root-mean-square error (RMSE) and Kolmogorov-Smirnov distance "
+    "(KS, the maximum absolute difference) between each simulated "
+    "Kaplan-Meier curve and its corresponding experimental Kaplan-Meier "
+    "curve, evaluated at the experimental curve's observed time points, for "
+    "DMSO controls and cohorts receiving auxin from day 10 or day 21. Both "
+    "statistics are in units of survival probability (0-1); lower values "
+    "indicate closer agreement. Experimental data are from Venz et al. (2021)."
+)
+# The legend is the CSV's first row (a single quoted field); the table
+# header follows on row 2 -- read back with pd.read_csv(..., skiprows=1).
+csv_path = TABLES_DIR / 'pub_table_goodness_of_fit_auxin10switch.csv'
+with open(csv_path, 'w', newline='') as f:
+    csv.writer(f).writerow([TABLE_S1_LEGEND])
+    gof_table.round(4).to_csv(f)
+print("Supplementary Table S1. Goodness of fit (simulated vs. real, at real observed time points).")
 print(gof_table.round(4).to_string())
 gof_table.round(4)
 

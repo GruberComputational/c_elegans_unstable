@@ -1,4 +1,5 @@
-Condition,RMSE,KS,Sim. truncated at day,Sim. S(t) at truncation
-DMSO day 10,0.1158,0.165,41.4691,0.0099
-Auxin day 10,0.0806,0.1817,59.0985,0.0098
-Auxin day 21,0.0488,0.1271,51.4858,0.0098
+"Supplementary Table S1. Goodness of fit of the simulated survival curves. Root-mean-square error (RMSE) and Kolmogorov-Smirnov distance (KS, the maximum absolute difference) between each simulated Kaplan-Meier curve and its corresponding experimental Kaplan-Meier curve, evaluated at the experimental curve's observed time points, for DMSO controls and cohorts receiving auxin from day 10 or day 21. Both statistics are in units of survival probability (0-1); lower values indicate closer agreement. Experimental data are from Venz et al. (2021)."
+Condition,RMSE,KS
+DMSO day 10,0.1158,0.165
+Auxin day 10,0.0806,0.1817
+Auxin day 21,0.0488,0.1271
