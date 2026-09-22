@@ -17,20 +17,20 @@
 # # Publication-quality figures -- two-stage switching model
 #
 # Parameters below are `auto_fit_parameters_mle.py`'s automated fit against
-# the real grouped lifespan data. That notebook fits by maximizing
-# `_weighted_neg_log_lik`, a Monte Carlo grouped-data log-likelihood (each
-# observed death contributes the simulated model's own interval probability
-# mass, each censored worm its survival probability -- see that notebook's
-# own markdown for the full derivation), as an alternative to a weighted
-# least-squares fit against the empirical KM curve's values
-# (`_weighted_log_loss`, also defined there). Now the leading fit for this
+# the real grouped lifespan data: DMSO baseline `(a0, log_g0, sigma)` and
+# Auxin_day_10's own independent `(a0_auxin10, log_g0_auxin10)`, each fit by
+# maximizing `_weighted_neg_log_lik`, a Monte Carlo grouped-data
+# log-likelihood (each observed death contributes the simulated model's own
+# interval probability mass, each censored worm its survival probability --
+# see that notebook's own markdown for the full derivation), as an
+# alternative to a weighted least-squares fit against the empirical KM
+# curve's values (`_weighted_log_loss`, also defined there). Drives this
 # project's figures: a conceptual potential/dynamical-regimes schematic
 # (Figure 1), representative trajectories (Figure 2), and simulated vs. real
 # survival curves with a goodness-of-fit table (Figure 3). Fit under
-# `Z_M_RANGE=(4,10)`, `Z_H_RANGE=(40,60)` -- both barriers, `sigma`, and the
-# post-switch scale factors constrained to that biologically-plausible
-# region as a **hard constraint** (see `auto_fit_parameters_mle.py` Step
-# 0/1/2), not just a loose sanity box.
+# `Z_M_RANGE=(4,10)`, `Z_H_RANGE=(40,60)` -- both barriers and `sigma`
+# constrained to that biologically-plausible region as a **hard constraint**
+# (see `auto_fit_parameters_mle.py` Step 0/1/1b), not just a loose sanity box.
 #
 # **Known, accepted limitation** (see that notebook's `R`-vs-CV sweep): the
 # fit's death-time variability (simulated CV ~0.35) is still wider than the
@@ -42,22 +42,30 @@
 # expected to be resolvable with this data -- accepted as a known model
 # limitation rather than chased further.
 #
-# **Auxin_day_10 gets its own independent `(a0_auxin10, log_g0_auxin10)`**,
-# simulated as a single phase from day 0 -- *not* the two-stage
-# DMSO-then-switch model used for Auxin_day_21. These worms received the
-# auxin treatment from day 0, so unlike Auxin_day_21 they were never DMSO
-# worms at any observed age; there is no DMSO phase to switch out of. Only
-# Auxin_day_21 uses `(g1_scale, a1_scale)` and the DMSO-baseline switch.
+# **Three conditions, two dynamical regimes:**
+# - **DMSO_day_10** (single phase): simulated from day 0 under the DMSO
+#   baseline `(a0, g0)` throughout.
+# - **Auxin_day_10** (single phase, own parameters): worms received auxin
+#   from day 0, so are simulated from day 0 under their own independently
+#   fitted `(a0_auxin10, g0_auxin10)` throughout -- never on DMSO dynamics at
+#   any observed age, so there is no baseline phase to switch out of.
+# - **Auxin_day_21** (two-stage switch): worms follow the DMSO baseline
+#   `(a0, g0)` up to day 21, then switch to Auxin_day_10's own fitted
+#   `(a0_auxin10, g0_auxin10)` for the remainder -- i.e. post-switch dynamics
+#   are exactly Auxin_day_10's fitted dynamics, on the reasoning that worms
+#   switched onto auxin at day 21 should settle into the same post-auxin
+#   dynamics as worms that received auxin from day 0.
 #
 # Reuses the shared simulation utilities already in `src/` rather than
 # reimplementing them: `model.simulate_fpt_and_state` / `model.km_from_fpt`,
 # and `model.simulate_two_phase` / `model.simulate_two_phase_trajectories`
-# for the day-10 / day-21 intervention switch. Those take the `(alpha, Z)`
+# for the day-21 intervention switch. Those take the `(alpha, Z)`
 # parameterization, with `Z = alpha / g` -- exactly `z_h` below -- so they
 # drop in directly for the `(a, g)` two-stage FPT/trajectory helpers this
 # figure set was originally sketched against.
 
 # %%
+import csv
 import sys
 import warnings
 from pathlib import Path
@@ -120,21 +128,23 @@ cm = 1 / 2.54  # one centimetre in inches
 # ## Fixed parameters
 
 # %%
-# DMSO baseline + Auxin_day_21's post-switch scale, and sigma -- fitted by
-# auto_fit_parameters_mle.py Steps 1 and 2 (fit_single_phase / fit_two_phase_scale,
-# MLE objective _weighted_neg_log_lik), constrained to Z_M_RANGE=(4,10),
-# Z_H_RANGE=(40,60), GAMMA_MIN=50.
-a0, log_g0, g1_scale, a1_scale, sigma = 0.1553, -2.5439, 1.0510, 0.8017, 1.5941
+# DMSO baseline and sigma -- fitted by auto_fit_parameters_mle.py Step 1
+# (fit_single_phase, MLE objective _weighted_neg_log_lik), constrained to
+# Z_M_RANGE=(4,10), Z_H_RANGE=(40,60), GAMMA_MIN=50.
+a0, log_g0, sigma = 0.1553, -2.5439, 1.5941
 sigma_sq = sigma ** 2  # model.py's simulation functions take the noise VARIANCE
 
 # Auxin_day_10's own independent single-phase parameters -- auto_fit_parameters_mle.py
-# Step 1b (fit_single_phase, sigma fixed at the DMSO fit above).
+# Step 1b (fit_single_phase, sigma fixed at the DMSO fit above). Used both
+# for the Auxin_day_10 condition itself and as Auxin_day_21's post-switch
+# (phase 2) dynamics -- see markdown above.
 a0_auxin10, log_g0_auxin10 = 0.1035, -2.7358
 
 g0 = 10.0 ** log_g0
-g1 = 10.0 ** (g1_scale * log_g0)
 g0_auxin10 = 10.0 ** log_g0_auxin10
-a1 = a0 * a1_scale
+
+# Phase 2 (post day-21-switch) dynamics = Auxin_day_10's own fitted params.
+a1, g1 = a0_auxin10, g0_auxin10
 
 # z_m (drift-to-exponential crossover) = sqrt(sigma_sq / a), NOT sigma / a --
 # see auto_fit_parameters_mle.py's Step 0 derivation (Podolskiy et al.
@@ -287,7 +297,7 @@ for i, (col, eq, name) in enumerate(regimes):
                transform=ax1_r.transAxes)
 
 fig1.tight_layout()
-fig1.savefig(FIGURES_DIR / 'pub_fig1_potential_unstable.png', bbox_inches='tight', dpi=600)
+fig1.savefig(FIGURES_DIR / 'pub_fig1_potential_unstable_auxin10switch.png', bbox_inches='tight', dpi=600)
 plt.show()
 
 # %%
@@ -501,12 +511,12 @@ for (Tz, color, pos) in zip(ZOOM_DAYS, ROI_COLORS, INSET_POS):
     fig2.add_artist(conR)
 
 legend_handles = [
-    Line2D([0], [0], color=C_D1, lw=1.4, label=rf'Died stage 1  ($t \leq {tI_21:.0f}$)'),
-    Line2D([0], [0], color=C_D2, lw=1.4, label=rf'Died stage 2  ($t > {tI_21:.0f}$)'),
+    Line2D([0], [0], color=C_D1, lw=1.4, label=rf'Died stage 1  ($t \leq {tI_21:.2f}$)'),
+    Line2D([0], [0], color=C_D2, lw=1.4, label=rf'Died stage 2  ($t > {tI_21:.2f}$)'),
     Line2D([0], [0], color='darkred', lw=1.4, ls='--',
-           label=rf'$Z$: ${z_h0:.0f} \to {z_h1:.0f}$'),
+           label=rf'$z_{{max}}$: ${z_h0:.2f} \to {z_h1:.2f}$'),
     Line2D([0], [0], color='royalblue', lw=1.2, ls=':',
-           label=rf'$z_m$: ${z_m0:.1f} \to {z_m1:.1f}$'),
+           label=rf'$z_m$: ${z_m0:.2f} \to {z_m1:.2f}$'),
 ]
 
 ax2.legend(handles=legend_handles, fontsize=7, loc='upper left',
@@ -519,7 +529,7 @@ ax2.set_xlim(0, T_MAX)
 ax2.set_ylim(0, Z_TOP)
 
 fig2.tight_layout(pad=0.55)
-fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories.png', bbox_inches='tight', dpi=600)
+fig2.savefig(FIGURES_DIR / 'pub_fig2_trajectories_auxin10switch.png', bbox_inches='tight', dpi=600)
 plt.show()
 
 # %% [markdown]
@@ -608,13 +618,19 @@ def _clip_near_floor(t, s, floor):
     below = np.where(s <= floor)[0]
     if below.size == 0:
         return t, s
-    cut = below[0] + 1
-    return t[:cut], s[:cut]
+    i = below[0]
+    if i == 0:
+        return t[:1], s[:1]
+    # End exactly at `floor` (linear interpolation across the crossing)
+    # rather than at the first grid point below it, which overshoots
+    # (e.g. 0.0098 instead of 0.01).
+    frac = (s[i - 1] - floor) / (s[i - 1] - s[i])
+    t_cross = t[i - 1] + frac * (t[i] - t[i - 1])
+    return np.append(t[:i], t_cross), np.append(s[:i], floor)
 
 
 fig3, ax3 = plt.subplots(figsize=(11 * cm, 8 * cm))
 gof_results = {}
-sim_endpoints = {}
 
 for name, col, T_sim, cond in conditions:
     t_emp, s_emp = cond['t_emp'], cond['S_emp']
@@ -624,7 +640,6 @@ for name, col, T_sim, cond in conditions:
 
     S_sim_plot = km_from_fpt(T_sim, t_eval, t_max=T_MAX)
     t_sim_c, s_sim_c = _clip_near_floor(t_eval, S_sim_plot, SIM_FLOOR)
-    sim_endpoints[name] = (t_sim_c[-1], s_sim_c[-1])
     # Plotted as a continuous line, not ax3.step: with N_KM=20000 the KM
     # estimate's individual steps are small enough that drawing them as a
     # staircase just looks jagged -- a plain line reads as the smooth
@@ -644,7 +659,7 @@ ax3.set_yticks([0, 0.25, 0.50, 0.75, 1.00])
 ax3.legend(loc='upper right', fontsize=6, handlelength=1.5)
 
 fig3.tight_layout(pad=0.5)
-fig3.savefig(FIGURES_DIR / 'pub_fig3_survival_overlay.png', bbox_inches='tight', dpi=600)
+fig3.savefig(FIGURES_DIR / 'pub_fig3_survival_overlay_auxin10switch.png', bbox_inches='tight', dpi=600)
 plt.show()
 
 # %% [markdown]
@@ -662,20 +677,43 @@ plt.show()
 # reported in the accompanying summary table rather than on the figure
 # itself. Experimental data are from Venz et al. \cite{Venz2021}.
 
+# %% [markdown]
+# **Supplementary Table S1 legend (draft).** **Goodness of fit of the
+# simulated survival curves.** Root-mean-square error (RMSE) and
+# Kolmogorov--Smirnov distance (KS, the maximum absolute difference)
+# between each simulated Kaplan--Meier curve and its corresponding
+# experimental Kaplan--Meier curve, evaluated at the experimental curve's
+# observed time points, for DMSO controls and cohorts receiving auxin from
+# day 10 or day 21. Both statistics are in units of survival probability
+# (0--1); lower values indicate closer agreement. Experimental data are
+# from Venz et al. \cite{Venz2021}.
+
 # %%
 gof_table = pd.DataFrame([
     {
         "Condition": name,
         "RMSE": gof_results[name]["rmse"],
         "KS": gof_results[name]["ks"],
-        "Sim. truncated at day": sim_endpoints[name][0],
-        "Sim. S(t) at truncation": sim_endpoints[name][1],
     }
     for name, *_ in conditions
 ]).set_index("Condition")
-gof_table.round(4).to_csv(TABLES_DIR / 'pub_table_goodness_of_fit.csv')
-print(f"Goodness-of-fit summary (simulated vs. real, at real observed time points).\n"
-      f"Simulated curves truncated once S(t) drops to/below SIM_FLOOR ({SIM_FLOOR:.2%}):")
+TABLE_S1_LEGEND = (
+    "Supplementary Table S1. Goodness of fit of the simulated survival "
+    "curves. Root-mean-square error (RMSE) and Kolmogorov-Smirnov distance "
+    "(KS, the maximum absolute difference) between each simulated "
+    "Kaplan-Meier curve and its corresponding experimental Kaplan-Meier "
+    "curve, evaluated at the experimental curve's observed time points, for "
+    "DMSO controls and cohorts receiving auxin from day 10 or day 21. Both "
+    "statistics are in units of survival probability (0-1); lower values "
+    "indicate closer agreement. Experimental data are from Venz et al. (2021)."
+)
+# The legend is the CSV's first row (a single quoted field); the table
+# header follows on row 2 -- read back with pd.read_csv(..., skiprows=1).
+csv_path = TABLES_DIR / 'pub_table_goodness_of_fit_auxin10switch.csv'
+with open(csv_path, 'w', newline='') as f:
+    csv.writer(f).writerow([TABLE_S1_LEGEND])
+    gof_table.round(4).to_csv(f)
+print("Supplementary Table S1. Goodness of fit (simulated vs. real, at real observed time points).")
 print(gof_table.round(4).to_string())
 gof_table.round(4)
 

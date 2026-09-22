@@ -1,0 +1,3 @@
+model,n_landmark,landmark,tau,rmst_observed_days,rmst_model_days,delta_rmst_days,p_rmst_greater,p_rmst_mc_se,n_boot,seed,p_resolution,inference,curve_distance,p_curve_distance
+Gompertz,59,21.0,35.0,7.796610169491526,2.7033184769987075,5.093291692492818,9.999000099990002e-05,9.999000099990002e-05,10000,20260919,9.999000099990002e-05,fixed prediction; inspection-time RMST; no training-fit uncertainty,2.4193253990356185,9.999000099990002e-05
+Langevin,59,21.0,35.0,7.796610169491526,8.09498931766591,-0.2983791481743836,0.6866313368663134,0.004638628505274945,10000,20260919,9.999000099990002e-05,fixed prediction; inspection-time RMST; no training-fit uncertainty,0.026896742481950453,0.5374462553744626

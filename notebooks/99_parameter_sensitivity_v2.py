@@ -16,20 +16,13 @@
 # %% [markdown]
 # # Parameter sensitivity: what happens when only `alpha` or only `g` changes?
 #
-# ## The comment
-#
-# > "Related to the point above [how the transition values in Figure 2 were
-# > chosen], a parameter sensitivity analysis would be useful. For example,
-# > what happens if only one parameter (`alpha` or `g`) is changed at a
-# > time?"
-#
-# ## Plan
-#
-# The Langevin drift is `v(z) = alpha*z + g*z^2`, so `alpha` and `g` are
-# the two literal coefficients in the equation as written. We vary each one
-# individually, holding the *other coefficient* (not `Z`) fixed, since `Z =
-# alpha/g` is itself derived from whichever of `alpha`/`g` is held fixed --
-# so:
+# This is an exploratory supplementary analysis: the Langevin drift is
+# `v(z) = alpha*z + g*z^2`, so `alpha` and `g` are the two literal
+# coefficients in the equation as written. This notebook checks how
+# sensitive the model's predicted survival curve is to each one
+# individually, holding the *other coefficient* (not `Z`) fixed, since
+# `Z = alpha/g` is itself derived from whichever of `alpha`/`g` is held
+# fixed:
 #
 # - **Sweep A**: vary `alpha`, hold `g` fixed at its DMSO-fitted value.
 #   `Z = alpha/g` then moves *with* `alpha`.
@@ -37,23 +30,13 @@
 #   `Z = alpha/g` then moves *inversely* with `g`.
 #
 # **Baseline**: `(alpha, g, sigma)` are taken directly from
-# `notebooks/0_auto_fit_parameters_mle.py`'s Step 1 fit (as pushed into
-# `notebooks/1_pub_figures.py`'s "Fixed parameters" cell) -- the same
-# numbers that generated the actual published Figure 1/2/3, not a separate,
-# independently-fit baseline. Two earlier versions of this notebook used
-# different baselines, both since superseded: first an independent
-# closed-form MLE fit (`sigma_sq` fixed at an assumed 1.0, giving
-# `alpha=0.179, Z=47.2`), then a least-squares fit actually used in the
-# figures at the time (`alpha=0.195, Z=59.65, sigma=1.784`). Since the
-# manuscript's leading fit is now `0_auto_fit_parameters_mle.py`'s Monte
-# Carlo maximum-likelihood fit (`alpha=0.155, Z=54.33, sigma=1.594`), this
-# notebook is re-anchored here again so the sensitivity analysis keeps
-# answering "what happens around the model as actually published," not
-# around a since-superseded fit.
+# `notebooks/0_auto_fit_parameters_mle.py`'s Step 1 fit -- the same numbers
+# used in `2_pub_figures_auxin10_switch.py`'s published figures, not a
+# separate, independently-fit baseline.
 #
-# `sigma_sq` is held fixed throughout **this sweep** because the reviewer's
-# question is specifically about `alpha` and `g` -- not because `sigma_sq`
-# is assumed constant in general (it is itself a fitted quantity in
+# `sigma_sq` is held fixed throughout this sweep, since the question here is
+# specifically about `alpha` and `g` -- not because `sigma_sq` is assumed
+# constant in general (it is itself a fitted quantity in
 # `0_auto_fit_parameters_mle.py`, estimated jointly with `alpha`/`g` from
 # the DMSO data by maximum likelihood, then held fixed across conditions
 # there).
@@ -82,9 +65,9 @@ FACTORS = [0.5, 0.75, 1.0, 1.25, 1.5]  # +/-50%, +/-25%, baseline
 # %% [markdown]
 # ## Baseline: the DMSO operating point actually used in Figures 1-3
 #
-# Hardcoded from `1_pub_figures.py`'s "Fixed parameters" cell rather than
-# refit here, so this analysis can never silently drift from what the
-# published figures actually show.
+# Hardcoded from `2_pub_figures_auxin10_switch.py`'s "Fixed parameters"
+# cell rather than refit here, so this analysis can never silently drift
+# from what the published figures actually show.
 
 # %%
 alpha_base, log_g_base, sigma_base = 0.1553, -2.5439, 1.5941
@@ -92,54 +75,20 @@ g_base = 10.0 ** log_g_base
 Z_base = alpha_base / g_base
 SIGMA_SQ = sigma_base ** 2
 gamma_base = alpha_base * Z_base**2 / SIGMA_SQ
-print(f"Baseline (DMSO, from 1_pub_figures.py): alpha={alpha_base:.5g}, Z={Z_base:.5g}, "
+print(f"Baseline (DMSO, from 2_pub_figures_auxin10_switch.py): alpha={alpha_base:.5g}, Z={Z_base:.5g}, "
       f"g={g_base:.5g}, sigma_sq={SIGMA_SQ:.5g}, gamma={gamma_base:.5g}")
 
 t_plot = np.linspace(0, 30, 300)
 
 # %% [markdown]
-# ## Why the two sweeps aren't symmetric: `gamma`'s scaling
+# ## Note on the exploratory curves
 #
-# `gamma = alpha*Z^2/sigma_sq` sets the model's dynamical regime (Eq. B12;
-# also the quantity behind the `z_m`/`Z` gap in the previous response).
-# Substituting `Z = alpha/g`:
-#
-# ```
-# gamma = alpha * (alpha/g)^2 / sigma_sq = alpha^3 / (g^2 * sigma_sq)
-# ```
-#
-# So **holding `g` fixed, `gamma` scales as `alpha^3`** (because `Z` moves
-# *with* `alpha` in this sweep, compounding the direct `alpha` dependence),
-# while **holding `alpha` fixed, `gamma` scales as `1/g^2`**. A cubic
-# dependence is much steeper than an inverse-square one over the same
-# +/-50% range -- so we should expect the `alpha`-sweep to move the
-# survival curve considerably more than the `g`-sweep does, and this is a
-# quantitative prediction we can check directly below, not just a visual
-# impression.
-#
-# A second, equally important asymmetry: **`MRDT = ln(2)/alpha` depends
-# only on `alpha`.** Sweep B changes `g` (and therefore `Z`) while `alpha`
-# is held fixed, so MRDT is *exactly* unchanged across that entire sweep,
-# even though the survival curve itself visibly shifts. MRDT alone would
-# make Sweep B look like it does nothing -- which is why we also report
-# `median_survival_time(alpha, Z, sigma_sq)` (a function of all three
-# parameters) as the primary outcome metric below, not MRDT alone.
-#
-# **A note on `gamma` at the low end of Sweep A.** `auto_fit_parameters_mle.py`
-# only trusts `alpha`/`Z` combinations with `gamma >= GAMMA_MIN=50` (the
-# "weak-nonlinearity"/Gompertzian regime, Eq. B12) as biologically
-# plausible. Sweep A's `alpha x0.5` point lands at `gamma~22.6` -- *below*
-# that threshold, since `gamma` scales as `alpha^3` there. This is exactly
-# why `median_survival_time` (`src/survival.py`) simulates the actual
-# `beta=1` model directly (`model.simulate_fpt_and_state`) rather than
-# root-finding on the closed-form `survival_analytic` (Eq. B30): that
-# closed form is only *derived* to hold when `gamma >> 1`, so trusting it
-# at `gamma~22.6` would silently misreport the sweep's own low-`alpha`
-# outcome. The `S(t)` curves plotted in Sweeps A/B below still use
-# `survival_analytic` purely for a fast, qualitative visual of the curve's
-# shape across the sweep -- the quantitative `median_survival_time` bars in
-# the "Direct comparison" section further down are what to trust
-# numerically, especially near this sweep's low-`gamma` edge.
+# The quick `S(t)` plots in Sweeps A/B below use the closed-form
+# `survival_analytic` (Eq. B30) purely for speed; that expression is an
+# approximation that holds for `gamma >> 1`. All reported median lifespans
+# (`median_survival_time`) and the manuscript figure further down are
+# simulated directly from the beta=1 model with the reflecting boundary at
+# z=0, so they are valid across the whole sweep.
 
 # %% [markdown]
 # ## Sweep A: vary `alpha`, hold `g` fixed
@@ -223,14 +172,41 @@ print(f"gamma range: alpha-only = [{sweep_a['gamma'].min():.4g}, {sweep_a['gamma
       f"g-only = [{sweep_b['gamma'].min():.4g}, {sweep_b['gamma'].max():.4g}]")
 
 # %% [markdown]
-# **Result**: the `alpha`-only sweep moves the median lifespan (and `gamma`)
-# far more than the equivalent `g`-only sweep, exactly as predicted by the
-# `alpha^3` vs. `1/g^2` scaling above -- this is a real, derivable property
-# of the model, not a coincidence of these particular +/-50% bounds. `alpha`
-# is the more powerful lever on outcome in this model, which is itself a
-# useful, reportable finding: it says the model's behavior is *not*
-# equally sensitive to both coefficients, and explains why fitting focused
-# more attention on `alpha`'s value throughout this project.
+# **Result**: decreasing either parameter extends median survival and
+# increasing either shortens it. For equal relative changes, `alpha` has the
+# somewhat larger effect on the median lifespan.
+
+# %% [markdown]
+# ## Shape of the change: interquartile range
+#
+# `alpha` and `g` change the survival curve differently: in the Gompertzian
+# closed form (Eq. B30) time enters only through `gamma * exp(-2*alpha*t)`,
+# so a change in `g` (via `gamma`) translates the curve in time, while a
+# change in `alpha` also rescales time and so stretches or compresses it.
+# We quantify the shape with the interquartile range of the simulated
+# lifespans, IQR = T25 - T75 (times at which S = 0.25 and S = 0.75).
+# Same seed and settings as `median_survival_time`, so the paths are the
+# ones behind the reported T50.
+
+# %%
+from lifelines import KaplanMeierFitter
+from model import simulate_fpt_and_state
+
+
+def lifespan_iqr(alpha, Z, sigma_sq, n_paths=20_000, dt=0.1, t_max=300.0, seed=0):
+    T, _, _ = simulate_fpt_and_state(
+        n_paths, alpha, alpha / Z, sigma_sq, Z, z0=0.0, dt=dt, t_max=t_max,
+        rng=np.random.default_rng(seed),
+    )
+    sf = KaplanMeierFitter().fit(T, event_observed=T < t_max).survival_function_
+    t_at = lambda p: float(sf.index[np.argmax(sf.values[:, 0] <= p)])
+    return t_at(0.25) - t_at(0.75)
+
+
+sweep_a["iqr"] = [lifespan_iqr(a, z, SIGMA_SQ) for a, z in zip(sweep_a["alpha"], sweep_a["Z"])]
+sweep_b["iqr"] = [lifespan_iqr(a, z, SIGMA_SQ) for a, z in zip(sweep_b["alpha"], sweep_b["Z"])]
+print(sweep_a[["factor", "median_lifespan", "iqr"]].to_string(index=False))
+print(sweep_b[["factor", "median_lifespan", "iqr"]].to_string(index=False))
 
 # %% [markdown]
 # ## Connecting back to trajectories (Figure 2 style)
@@ -264,27 +240,15 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## Summary for the reviewer response
+# ## Summary
 #
-# 1. Both `alpha` and `g` were swept individually (+/-25%, +/-50%) around
-#    DMSO's actual fitted baseline, holding the other coefficient fixed --
-#    not an arbitrary illustrative range, but a systematic one-at-a-time
-#    sensitivity analysis anchored to the fitted model.
-# 2. The two sweeps are **not symmetric, and this is derivable rather than
-#    incidental**: `gamma = alpha*Z^2/sigma_sq = alpha^3/(g^2*sigma_sq)`,
-#    so perturbing `alpha` (which also moves `Z` in this parameterization)
-#    affects the model's regime roughly cubically, while perturbing `g`
-#    alone affects it only quadratically (inversely). This is confirmed
-#    numerically above (`gamma` and median lifespan both swing much more
-#    under the `alpha` sweep than the `g` sweep for the same +/-50% range).
-# 3. **`MRDT` alone is blind to `g`/`Z` entirely** (`MRDT = ln(2)/alpha`) --
-#    a naive sensitivity report using only MRDT would have completely
-#    missed Sweep B's effect on the survival curve, which is why
-#    `median_survival_time` (sensitive to all three parameters) is used as
-#    the primary outcome metric here instead.
-# 4. The model is more sensitive to `alpha` than to `g` over comparable
-#    relative perturbations -- a real, reportable asymmetry, not a
-#    limitation to hide.
+# 1. `alpha` and `g` were swept individually (+/-25%, +/-50%) around the
+#    DMSO fitted baseline, holding the other coefficient and `D` fixed.
+# 2. Decreasing either parameter extends median survival; for equal
+#    relative changes `alpha` has the somewhat larger effect.
+# 3. The shape of the change differs: changing `g` shifts the survival
+#    curve in time with nearly unchanged spread (IQR), whereas changing
+#    `alpha` also stretches or compresses it.
 
 # %% [markdown]
 # ## Manuscript-ready outputs (Supplementary Note 1)
@@ -294,7 +258,7 @@ plt.show()
 # by `notebooks/supplementary_note1_sensitivity.tex` -- one figure and one
 # LaTeX table -- using the manuscript's own notation (`alpha`, `g`,
 # `Z = alpha/g`, `D` with `sigma_sq = 2*D`) and its plotting style
-# (`1_pub_figures.py`'s rcParams).
+# (`2_pub_figures_auxin10_switch.py`'s rcParams).
 #
 # The curves plotted here are **simulated directly**
 # (`model.simulate_fpt_and_state` + `model.km_from_fpt`, the same beta=1
@@ -388,42 +352,68 @@ plt.show()
 # `supplementary_note1_sensitivity.tex`.
 
 # %%
+from decimal import Decimal, ROUND_HALF_UP
+
+
+def _fmt(x, decimals):
+    """Round half-up from the value's shortest repr, so e.g. 0.1035 prints as
+    0.104 (matching main-text Table I) rather than float-artefact 0.103."""
+    if pd.isna(x):
+        return "--"
+    q = Decimal(1).scaleb(-decimals)
+    return str(Decimal(repr(float(x))).quantize(q, rounding=ROUND_HALF_UP))
+
+
 table_a = sweep_a.copy()
-table_a.insert(0, "sweep", r"Sweep A ($\alpha$ varies)")
+table_a.insert(0, "sweep", r"$\alpha$ varies")
 table_a["g"] = g_base
 
 table_b = sweep_b.copy()
-table_b.insert(0, "sweep", r"Sweep B ($g$ varies)")
+table_b.insert(0, "sweep", r"$g$ varies")
 
-table_cols = ["sweep", "factor", "alpha", "g", "Z", "gamma", "mrdt", "median_lifespan"]
-supp_table = pd.concat([table_a[table_cols], table_b[table_cols]], ignore_index=True)
+table_cols = ["sweep", "factor", "alpha", "g", "Z", "median_lifespan", "iqr"]
+supp_table = pd.concat(
+    [table_a[table_cols], table_b[table_cols]], ignore_index=True
+)
+supp_table["factor"] = supp_table["factor"].map(lambda f: "--" if pd.isna(f) else f"{f:g}")
+supp_table["alpha"] = supp_table["alpha"].map(lambda v: _fmt(v, 4 if v < 0.1 else 3))
+supp_table["g"] = (supp_table["g"] * 1e3).map(lambda v: _fmt(v, 2))
+supp_table["Z"] = supp_table["Z"].map(lambda v: _fmt(v, 1))
+supp_table["median_lifespan"] = supp_table["median_lifespan"].map(lambda v: _fmt(v, 1))
+supp_table["iqr"] = supp_table["iqr"].map(lambda v: _fmt(v, 1))
 supp_table = supp_table.rename(columns={
-    "sweep": "Sweep",
+    "sweep": "Perturbation",
     "factor": "Factor",
     "alpha": r"$\alpha$ (d$^{-1}$)",
     "g": r"$g$ ($10^{-3}$)",
-    "Z": r"$Z$",
-    "gamma": r"$\gamma$",
-    "mrdt": "MRDT (d)",
+    "Z": r"$z_{max}$",
     "median_lifespan": r"$T_{50}$ (d)",
+    "iqr": r"IQR (d)",
 })
-supp_table[r"$g$ ($10^{-3}$)"] = supp_table[r"$g$ ($10^{-3}$)"] * 1e3
 
 latex_body = supp_table.to_latex(
-    index=False, escape=False, float_format="%.3g",
+    index=False, escape=False,
     column_format="l" + "r" * (len(table_cols) - 1),
 )
+# Rule between the two sweeps.
+body_lines = latex_body.split("\n")
+first_row = body_lines.index(r"\midrule") + 1
+n_a = len(table_a)
+body_lines.insert(first_row + n_a, r"\midrule")
+latex_body = "\n".join(body_lines)
+
 latex_table = (
     "% Auto-generated by notebooks/99_parameter_sensitivity.py -- do not edit by hand.\n"
     "\\begin{table}[htbp]\n\\centering\n"
     + latex_body
-    + "\\caption{One-at-a-time sensitivity of the DMSO baseline "
-      "($\\alpha_0=" + f"{alpha_base:.3g}" + "$, $g_0=" + f"{g_base * 1e3:.3g}"
-      + r"\times10^{-3}$, $Z_0=" + f"{Z_base:.3g}" + "$, $D=" + f"{D_base:.3g}"
-      + r"$). $\gamma=\alpha Z^2/(2D)$; $T_{50}$ is the median simulated "
-        r"lifespan from $2\times10^4$ Euler--Maruyama paths of Eq.~(1), "
-        r"not the closed-form Gompertz approximation, which requires "
-        r"$\gamma\gg1$ and is unreliable at Sweep A's low-$\alpha$ end.}"
+    + "\\caption{One-at-a-time sensitivity of survival to $\\alpha$ and $g$. "
+      "Each parameter scaled by the given factor around the DMSO "
+      "baseline ($\\alpha_0=" + _fmt(alpha_base, 3) + "$~d$^{-1}$, $g_0="
+      + _fmt(g_base * 1e3, 2) + r"\times10^{-3}$, $z_{max,0}=" + _fmt(Z_base, 1)
+      + "$) with the other held fixed. "
+        "$D=" + _fmt(D_base, 2) + "$ throughout. $T_{50}$ is the median of $2\\times10^4$ "
+        "simulated first-passage times (Euler--Maruyama, $\\Delta t=0.1$); "
+        "IQR is $T_{25}-T_{75}$, the interquartile range of the same simulated lifespans.}"
       "\n\\label{tab:supp_note1_sensitivity}\n\\end{table}\n"
 )
 (NOTES_DIR / "supp_note1_table.tex").write_text(latex_table)
