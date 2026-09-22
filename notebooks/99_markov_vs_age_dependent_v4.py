@@ -41,7 +41,7 @@ import numpy as np
 import pandas as pd
 from lifelines import NelsonAalenFitter
 from scipy.optimize import differential_evolution, minimize
-from scipy.stats import linregress, norm
+from scipy.stats import binomtest, linregress, norm
 
 NOTEBOOK_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 SRC_DIR = NOTEBOOK_DIR.parent / "src"
@@ -1011,6 +1011,120 @@ ax.set(xlabel="Age (days)", ylabel="Survival conditional on day 21",
 ax.legend(fontsize=8)
 plt.tight_layout()
 plt.show()
+
+# %% [markdown]
+# ### Single-endpoint check: exact binomial test at day 30
+#
+# The RMST test above summarizes the whole post-day-21 curve. This is the
+# same comparison collapsed onto one prespecified age, which makes the size
+# of the discrepancy readable without any bootstrap machinery.
+#
+# Each of the 59 worms observed alive past day 21 is treated as one
+# Bernoulli trial with success probability `p = S(30)/S(21)` taken straight
+# from the fixed Gompertz two-phase prediction (no refit, no free
+# parameters). Worms are assumed independent; replicate structure is not
+# recoverable from these aggregated life tables, so any real clustering
+# would make the test anticonservative.
+#
+# "Survived until day 30" is ambiguous on an inspection grid, so both
+# readings are reported and neither is presented as the single right one:
+#
+# * **At risk at day 30** -- worms that reached the day-30 inspection, i.e.
+#   survived past the previous inspection at day 28. The matching model
+#   probability is `S(28)/S(21)`. This is the reading that yields the
+#   quoted 26.
+# * **Alive after day 30** -- worms that survived the day-30 inspection,
+#   matching `S(30)/S(21)`. On this reading the observed count is 18.
+#
+# Both counts are recomputed from `d_auxin21` rather than hardcoded, and
+# the stated 59/26 is asserted against the data.
+#
+# The alternative is one-sided `greater`: the scientific claim under test is
+# that more worms survive than the Gompertz extrapolation of the DMSO
+# baseline allows. Direction was fixed by that claim, not by inspecting the
+# counts. A one-sided test cannot detect an excess of deaths.
+#
+# This shares the day-30 data with the RMST test above, so it is a
+# restatement of the same evidence at one age, not independent confirmation;
+# p-values are unadjusted. Langevin is shown on the same rows for contrast,
+# but this test was set up for Gompertz and is not a model-selection rule.
+# Reference: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html
+
+# %%
+BINOM_LANDMARK = 21.0
+BINOM_ENDPOINT = 30.0
+
+
+def _survival_at(S_at_grid, d, age):
+    """Model S(age) off the [0, *unique ages] grid these predictions use."""
+    grid = np.r_[0.0, np.unique(d.t)]
+    idx = np.searchsorted(grid, age)
+    if idx >= grid.size or grid[idx] != age:
+        raise ValueError(f"{age} is not a recorded inspection age; do not interpolate bins.")
+    return float(np.asarray(S_at_grid, dtype=float)[idx])
+
+
+def binomial_endpoint_test(d, S_at_grid, *, landmark, endpoint, reference_age,
+                           alternative="greater"):
+    """Exact one-sided binomial test of one fixed-model survival probability.
+
+    reference_age is the grid age whose model survival defines the success
+    probability: `endpoint` for "alive after endpoint", or the preceding
+    inspection age for "at risk at endpoint" (see the markdown above).
+    Requires no censoring in (landmark, endpoint], so that the observed
+    count is an unambiguous binomial numerator.
+    """
+    t = np.asarray(d.t, dtype=float)
+    event = np.asarray(d.event_observed, dtype=float)
+    weight = np.asarray(d.weight, dtype=float)
+    post = (t > landmark) & (weight > 0)
+    n = int(weight[post].sum())
+    if n == 0:
+        raise ValueError("No worms remain observed after the landmark.")
+    if np.any(post & (t <= endpoint) & (event == 0)):
+        raise ValueError("Censoring in (landmark, endpoint] makes the binomial count ambiguous.")
+    successes = n - int(weight[post & (t <= reference_age) & (event == 1)].sum())
+    p_model = _survival_at(S_at_grid, d, reference_age) / _survival_at(S_at_grid, d, landmark)
+    if not 0.0 < p_model <= 1.0:
+        # A simulated S can hit exactly 0 on a finite path budget; binomtest
+        # would then report p=0, which is a resolution artifact, not evidence.
+        return {"n_trials": n, "successes": successes, "p_model": p_model,
+                "expected_survivors": n * p_model, "p_value": np.nan,
+                "note": "model probability is zero to simulation resolution; test undefined"}
+    test = binomtest(successes, n, p_model, alternative=alternative)
+    return {"n_trials": n, "successes": successes, "p_model": p_model,
+            "expected_survivors": n * p_model, "p_value": test.pvalue,
+            "observed_fraction": successes / n, "alternative": alternative}
+
+
+unique21 = np.unique(d_auxin21.t)
+prior_inspection = float(unique21[unique21 < BINOM_ENDPOINT].max())
+
+binom_rows = []
+for reading, reference_age in [("at risk at day 30", prior_inspection),
+                               ("alive after day 30", BINOM_ENDPOINT)]:
+    for name, prediction in [("Gompertz", S_gomp3_grid), ("Langevin", S_langevin3_grid)]:
+        binom_rows.append({
+            "reading": reading, "model": name,
+            "S_ref_age": reference_age,
+            **binomial_endpoint_test(d_auxin21, prediction, landmark=BINOM_LANDMARK,
+                                     endpoint=BINOM_ENDPOINT, reference_age=reference_age,
+                                     alternative="greater"),
+        })
+binom_summary = pd.DataFrame(binom_rows)
+
+n_post21 = int(binom_summary["n_trials"].iloc[0])
+n_at_risk_30 = int(binom_summary.loc[binom_summary.reading == "at risk at day 30", "successes"].iloc[0])
+assert n_post21 == 59, f"expected 59 worms alive past day 21, got {n_post21}"
+assert n_at_risk_30 == 26, f"expected 26 worms at risk at day 30, got {n_at_risk_30}"
+
+print(f"\nConditional day-{BINOM_ENDPOINT:.0f} survival given alive past day "
+      f"{BINOM_LANDMARK:.0f} (n={n_post21}); one-sided exact binomial, alternative=greater:")
+print(binom_summary[["reading", "model", "S_ref_age", "p_model", "expected_survivors",
+                     "successes", "observed_fraction", "p_value"]]
+      .to_string(index=False, float_format=lambda x: f"{x:.6g}"))
+print("p_model is the fixed prediction's conditional survival probability; nothing is refit here.")
+print("Shares data with the RMST test above; not independent evidence. p-values unadjusted.")
 
 # %% [markdown]
 # ### Diagnostic: DMSO, Auxin_day_10, and the switch, as log-mortality lines
